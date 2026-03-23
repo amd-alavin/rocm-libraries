@@ -253,7 +253,7 @@ namespace TensileLite
 
         /* Helper function to compute GEMM embeddings. */
         std::vector<float> computeGEMMEmbeddings(const MyProblem& problem) const
-        {
+        {   
             // TODO check if sizes > 1
             float m = problem.freeSizeA(0);
             float n = problem.freeSizeB(0);

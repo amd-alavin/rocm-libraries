@@ -95,28 +95,30 @@ class Predicate(Property):
             return False
         
         # EqualityMatching < RangeMatching < Embedding < FreeSizeMatching
+        
+        # EqualityMatching < RangeMatching < Embedding < FreeSizeMatching
         if self.tag == 'EqualityMatching':
             if other.tag == 'EqualityMatching':
                 return False
-            if other.tag in ['RangeMatching', 'Embedding', 'FreeSizeMatching']:
+            if other.tag in ['RangeMatching', 'Embedding', 'FreeSizeMatching', 'PredictionMatching']:
                 return True
-        
+
         if self.tag == 'RangeMatching':
             if other.tag in ['EqualityMatching', 'RangeMatching']:
                 return False
-            if other.tag in ['Embedding', 'FreeSizeMatching']:
+            if other.tag in ['Embedding', 'FreeSizeMatching', 'PredictionMatching']:
                 return True
-            
+
         if self.tag == 'Embedding':
             if other.tag in ['EqualityMatching', 'RangeMatching', 'Embedding']:
                 return False
-            if other.tag  == 'FreeSizeMatching':
+            if other.tag  in ['FreeSizeMatching', 'PredictionMatching']:
                 return True
-    
+
         if self.tag == 'FreeSizeMatching':
             if other.tag in ['EqualityMatching', 'RangeMatching', 'Embedding', 'FreeSizeMatching']:
                 return False
-
+        
         selfValue = self.value
         otherValue = other.value
 
