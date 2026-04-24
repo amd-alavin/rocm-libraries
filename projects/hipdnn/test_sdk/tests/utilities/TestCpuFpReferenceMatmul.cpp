@@ -2,14 +2,15 @@
 // SPDX-License-Identifier:  MIT
 
 #include <gtest/gtest.h>
-#include <hipdnn_data_sdk/flatbuffer_utilities/GraphWrapper.hpp>
 #include <hipdnn_data_sdk/types.hpp>
 #include <hipdnn_data_sdk/utilities/ShapeUtilities.hpp>
 #include <hipdnn_data_sdk/utilities/Tensor.hpp>
+#include <hipdnn_flatbuffers_sdk/flatbuffer_utilities/GraphWrapper.hpp>
 #include <hipdnn_test_sdk/utilities/CpuFpReferenceMatmul.hpp>
 #include <hipdnn_test_sdk/utilities/FlatbufferGraphTestUtils.hpp>
 #include <hipdnn_test_sdk/utilities/TestTolerances.hpp>
 #include <hipdnn_test_sdk/utilities/TestUtilities.hpp>
+#include <hipdnn_test_sdk/utilities/detail/CpuFpReferenceUtilities.hpp>
 
 #include "cpu_graph_executor/MatmulGraphUtils.hpp"
 #include "cpu_graph_executor/MatmulTensorBundles.hpp"
@@ -18,11 +19,12 @@
 #include <vector>
 
 using namespace hipdnn_test_sdk::utilities;
-using namespace hipdnn_data_sdk::data_objects;
+using namespace hipdnn_flatbuffers_sdk::data_objects;
 using namespace hipdnn_data_sdk::utilities;
-using namespace hipdnn_data_sdk::flatbuffer_utilities;
+using namespace hipdnn_flatbuffers_sdk::flatbuffer_utilities;
 using namespace hipdnn_sdk_test_utils;
 using namespace hipdnn_data_sdk::types;
+using hipdnn_test_sdk::detail::safeTestTypeCast;
 
 namespace
 {
@@ -72,10 +74,11 @@ TEST_F(TestCpuFpReferenceMatmul, IsApplicable)
         auto graphTuple = buildMatmulGraph(tensorBundle, DataType::FLOAT, DataType::FLOAT);
 
         auto& graph = std::get<0>(graphTuple);
-        auto flatbufferGraph = graph->buildFlatbufferOperationGraph();
+        auto [serializedGraph, serErr] = graph->to_binary();
+        ASSERT_TRUE(serErr.is_good()) << serErr.get_message();
 
-        const hipdnn_data_sdk::flatbuffer_utilities::GraphWrapper graphWrap(flatbufferGraph.data(),
-                                                                            flatbufferGraph.size());
+        const hipdnn_flatbuffers_sdk::flatbuffer_utilities::GraphWrapper graphWrap(
+            serializedGraph.data(), serializedGraph.size());
         EXPECT_TRUE(CpuFpReferenceMatmul::isApplicable(graphWrap.getNode(0)));
     }
 
@@ -93,10 +96,11 @@ TEST_F(TestCpuFpReferenceMatmul, IsApplicable)
                                                    TensorLayout::NCHW);
 
         auto& graph = std::get<0>(graphTuple);
-        auto flatbufferGraph = graph->buildFlatbufferOperationGraph();
+        auto [serializedGraph, serErr] = graph->to_binary();
+        ASSERT_TRUE(serErr.is_good()) << serErr.get_message();
 
-        const hipdnn_data_sdk::flatbuffer_utilities::GraphWrapper graphWrap(flatbufferGraph.data(),
-                                                                            flatbufferGraph.size());
+        const hipdnn_flatbuffers_sdk::flatbuffer_utilities::GraphWrapper graphWrap(
+            serializedGraph.data(), serializedGraph.size());
         EXPECT_FALSE(CpuFpReferenceMatmul::isApplicable(graphWrap.getNode(0)));
     }
 }
@@ -220,11 +224,11 @@ TYPED_TEST(CpuFpReferenceMatmulBasic, Matmul)
     for(int i = 0; i < tensorAElementCount; ++i)
     {
         tensorA.memory().hostData()[i]
-            = static_cast<typename TypeParam::ADataType>(static_cast<float>(i + 1));
+            = safeTestTypeCast<typename TypeParam::ADataType>(static_cast<float>(i + 1));
     }
     for(int i = 0; i < tensorBElementCount; ++i)
     {
-        tensorB.memory().hostData()[i] = static_cast<typename TypeParam::BDataType>(
+        tensorB.memory().hostData()[i] = safeTestTypeCast<typename TypeParam::BDataType>(
             static_cast<float>(i + tensorAElementCount));
     }
 
@@ -253,11 +257,11 @@ TYPED_TEST(CpuFpReferenceMatmulBasic, MatmulTransposeA)
     for(int i = 0; i < tensorAElementCount; ++i)
     {
         tensorA.memory().hostData()[i]
-            = static_cast<typename TypeParam::ADataType>(static_cast<float>(i + 1));
+            = safeTestTypeCast<typename TypeParam::ADataType>(static_cast<float>(i + 1));
     }
     for(int i = 0; i < tensorBElementCount; ++i)
     {
-        tensorB.memory().hostData()[i] = static_cast<typename TypeParam::BDataType>(
+        tensorB.memory().hostData()[i] = safeTestTypeCast<typename TypeParam::BDataType>(
             static_cast<float>(i + tensorAElementCount));
     }
 
@@ -287,11 +291,11 @@ TYPED_TEST(CpuFpReferenceMatmulBasic, MatmulTransposeB)
     for(int i = 0; i < tensorAElementCount; ++i)
     {
         tensorA.memory().hostData()[i]
-            = static_cast<typename TypeParam::ADataType>(static_cast<float>(i + 1));
+            = safeTestTypeCast<typename TypeParam::ADataType>(static_cast<float>(i + 1));
     }
     for(int i = 0; i < tensorBElementCount; ++i)
     {
-        tensorB.memory().hostData()[i] = static_cast<typename TypeParam::BDataType>(
+        tensorB.memory().hostData()[i] = safeTestTypeCast<typename TypeParam::BDataType>(
             static_cast<float>(i + tensorAElementCount));
     }
 
@@ -320,11 +324,11 @@ TYPED_TEST(CpuFpReferenceMatmulBasic, MatmulTransposeBoth)
     for(int i = 0; i < tensorAElementCount; ++i)
     {
         tensorA.memory().hostData()[i]
-            = static_cast<typename TypeParam::ADataType>(static_cast<float>(i + 1));
+            = safeTestTypeCast<typename TypeParam::ADataType>(static_cast<float>(i + 1));
     }
     for(int i = 0; i < tensorBElementCount; ++i)
     {
-        tensorB.memory().hostData()[i] = static_cast<typename TypeParam::BDataType>(
+        tensorB.memory().hostData()[i] = safeTestTypeCast<typename TypeParam::BDataType>(
             static_cast<float>(i + tensorAElementCount));
     }
 
@@ -353,12 +357,12 @@ TYPED_TEST(CpuFpReferenceMatmulBasic, MatmulBatch3D)
     const int halfTensorACount = tensorAElementCount / 2;
     for(int i = 0; i < tensorAElementCount; ++i)
     {
-        tensorA.memory().hostData()[i]
-            = static_cast<typename TypeParam::ADataType>(static_cast<float>(i - halfTensorACount));
+        tensorA.memory().hostData()[i] = safeTestTypeCast<typename TypeParam::ADataType>(
+            static_cast<float>(i - halfTensorACount));
     }
     for(int i = 0; i < tensorBElementCount; ++i)
     {
-        tensorB.memory().hostData()[i] = static_cast<typename TypeParam::BDataType>(
+        tensorB.memory().hostData()[i] = safeTestTypeCast<typename TypeParam::BDataType>(
             static_cast<float>(i - tensorAElementCount));
     }
 
@@ -392,13 +396,13 @@ TYPED_TEST(CpuFpReferenceMatmulBasic, Matmul3DBroadcast)
     const int halfTensorACount = tensorAElementCount / 2;
     for(int i = 0; i < tensorAElementCount; ++i)
     {
-        tensorA.memory().hostData()[i]
-            = static_cast<typename TypeParam::ADataType>(static_cast<float>(i - halfTensorACount));
+        tensorA.memory().hostData()[i] = safeTestTypeCast<typename TypeParam::ADataType>(
+            static_cast<float>(i - halfTensorACount));
     }
     for(int i = 0; i < tensorBElementCount; ++i)
     {
-        tensorB.memory().hostData()[i]
-            = static_cast<typename TypeParam::BDataType>(static_cast<float>(i + halfTensorACount));
+        tensorB.memory().hostData()[i] = safeTestTypeCast<typename TypeParam::BDataType>(
+            static_cast<float>(i + halfTensorACount));
     }
 
     hipdnn_test_sdk::utilities::CpuFpReferenceMatmul::matmul<typename TypeParam::ADataType,
@@ -431,11 +435,11 @@ TYPED_TEST(CpuFpReferenceMatmulBasic, MatmulMultipleBatchDims4D)
     for(int i = 0; i < tensorAElementCount; ++i)
     {
         tensorA.memory().hostData()[i]
-            = static_cast<typename TypeParam::ADataType>(static_cast<float>(i + 1));
+            = safeTestTypeCast<typename TypeParam::ADataType>(static_cast<float>(i + 1));
     }
     for(int i = 0; i < tensorBElementCount; ++i)
     {
-        tensorB.memory().hostData()[i] = static_cast<typename TypeParam::BDataType>(
+        tensorB.memory().hostData()[i] = safeTestTypeCast<typename TypeParam::BDataType>(
             static_cast<float>(i + tensorAElementCount));
     }
 
@@ -464,13 +468,13 @@ TYPED_TEST(CpuFpReferenceMatmulBasic, Matmul4DBroadcast)
     const int halfTensorACount = tensorAElementCount / 2;
     for(int i = 0; i < tensorAElementCount; ++i)
     {
-        tensorA.memory().hostData()[i]
-            = static_cast<typename TypeParam::ADataType>(static_cast<float>(i - halfTensorACount));
+        tensorA.memory().hostData()[i] = safeTestTypeCast<typename TypeParam::ADataType>(
+            static_cast<float>(i - halfTensorACount));
     }
     for(int i = 0; i < tensorBElementCount; ++i)
     {
-        tensorB.memory().hostData()[i]
-            = static_cast<typename TypeParam::BDataType>(static_cast<float>(i + halfTensorACount));
+        tensorB.memory().hostData()[i] = safeTestTypeCast<typename TypeParam::BDataType>(
+            static_cast<float>(i + halfTensorACount));
     }
 
     hipdnn_test_sdk::utilities::CpuFpReferenceMatmul::matmul<typename TypeParam::ADataType,
