@@ -273,17 +273,10 @@ namespace TensileLite
             {
                 if(row.first.value->type() == "ExperimentalStreamK" && !streamK)
                     continue;
-<<<<<<< HEAD
                 
                 if(predictionLib && ((row.first.value->type() == "EqualityMatching")
                                      || (row.first.value->type() == "RangeMatching")
                                      || (row.first.value->type() == "Embedding"))) // TODO create separate origami 
-=======
-
-                if(predictionLib
-                   && ((row.first.value->type() == "EqualityMatching")
-                       || (row.first.value->type() == "RangeMatching")))
->>>>>>> develop
                     continue;
 
                 if(row.first(problem, hardware))
