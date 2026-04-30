@@ -103,6 +103,28 @@ namespace TensileLite
             const static bool flow = false;
         };
 
+        template <typename IO>
+        struct MappingTraits<EmbeddingSimilarity::HardwareConstants, IO>
+        {
+            using HWConstants = EmbeddingSimilarity::HardwareConstants;
+            using iot = IOTraits<IO>;
+
+            static void mapping(IO& io, HWConstants& hw)
+            {
+                iot::mapRequired(io, "n_cu", hw.n_cu);
+                iot::mapRequired(io, "peak_flops", hw.peak_flops);
+                iot::mapRequired(io, "mem_bw", hw.mem_bw);
+                iot::mapRequired(io, "l1_size", hw.l1_size);
+                iot::mapRequired(io, "l2_size", hw.l2_size);
+                iot::mapRequired(io, "l3_size", hw.l3_size);
+                iot::mapRequired(io, "wave_size", hw.wave_size);
+                iot::mapRequired(io, "dtype_size", hw.dtype_size);
+                iot::mapRequired(io, "acc_size", hw.acc_size);
+            }
+
+            const static bool flow = false;
+        };
+
         template <typename MyProblem, typename MySolution, typename IO>
         struct MappingTraits<EmbeddingSimilarityLibrary<MyProblem, MySolution>, IO>
         {
@@ -182,6 +204,24 @@ namespace TensileLite
                 }
                 iot::mapRequired(io, "solution_embeddings", *embeddings);
 
+                std::shared_ptr<EmbeddingSimilarity::HardwareConstants> hw_constants;
+                if(iot::outputting(io))
+                {
+                    hw_constants = lib.hw_constants;
+                }
+                else
+                {
+                    hw_constants = std::make_shared<EmbeddingSimilarity::HardwareConstants>();
+                    lib.hw_constants = hw_constants;
+                }
+                iot::mapRequired(io, "hardware_constants", *hw_constants);
+
+                // Validación
+                if(!hw_constants->valid())
+                    throw std::runtime_error(
+                        "ERROR: EmbeddingSimilarity hardware constants are invalid.");
+
+
                 // Checks
                 if(embeddings->size() != lib.solutions.size())
                     throw std::runtime_error(
@@ -196,14 +236,15 @@ namespace TensileLite
                     throw std::runtime_error(
                         "ERROR: EmbeddingSimilarity library solution embeddings size "
                         "does not match the network output size.");
-
-                if(lib.encoder->network.weights[0].size() != (91 * lib.encoder->network.bias[0].size()))
-                {
-                    throw std::runtime_error(
-                        "ERROR: EmbeddingSimilarity network input size ("
-                        + std::to_string((int) (lib.encoder->network.weights[0].size() / lib.encoder->network.bias[0].size()))
-                        + ") does not match the input vector size (91)");
-                }
+                
+                // TODO
+                // if(lib.encoder->network.weights[0].size() != (91 * lib.encoder->network.bias[0].size()))
+                // {
+                //     throw std::runtime_error(
+                //         "ERROR: EmbeddingSimilarity network input size ("
+                //         + std::to_string((int) (lib.encoder->network.weights[0].size() / lib.encoder->network.bias[0].size()))
+                //         + ") does not match the input vector size (91)");
+                // }
             }
 
             const static bool flow = false;

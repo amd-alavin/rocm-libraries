@@ -127,5 +127,41 @@ namespace TensileLite
             }
         };
 
+        struct HardwareConstants
+          {
+              HardwareConstants() = default;
+
+              std::string description() const
+              {
+                  return "HardwareConstants";
+              }
+
+              bool valid(bool verbose = false) const
+              {
+                  bool rv = true;
+                  if(n_cu <= 0)
+                  {
+                      if(verbose) std::cout << "Invalid n_cu: " << n_cu << std::endl;
+                      rv = false;
+                  }
+                  if(peak_flops <= 0.0f || mem_bw <= 0.0f)
+                  {
+                      if(verbose) std::cout << "Invalid peak_flops or mem_bw" << std::endl;
+                      rv = false;
+                  }
+                  return rv;
+              }
+
+              int n_cu = 256;
+              float peak_flops = 2.3e15f;
+              float mem_bw = 8e12f;
+              float l1_size = 32.0f * 1024.0f;
+              float l2_size = 4.0f * 1024.0f * 1024.0f;
+              float l3_size = 256.0f * 1024.0f * 1024.0f;
+              float wave_size = 64.0f;
+              float dtype_size = 2.0f;
+              float acc_size = 4.0f;
+          };
+
     } // namespace EmbeddingSimilarity
 } // namespace TensileLite
