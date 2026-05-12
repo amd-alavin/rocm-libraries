@@ -34,8 +34,10 @@
 #include <vector>
 
 #ifdef __AVX2__
-float avx_dot(int N, const float* A, const float* B);
+float avx_dot(int N, const float* __restrict__ A, const float* __restrict__ B);
 #endif
+
+
 
 namespace TensileLite
 {

@@ -145,7 +145,7 @@ namespace TensileLite
         return m_solution_index;
     }
 
-    bool Debug::usePredictionLibrary() const
+    int Debug::usePredictionLibrary() const
     {
         return m_predictionLib;
     }
@@ -206,7 +206,7 @@ namespace TensileLite
 
         const char* prediction_only = std::getenv("TENSILE_PREDICTION_LIB");
         if(prediction_only)
-            m_predictionLib = strtol(prediction_only, nullptr, 0) != 0;
+            m_predictionLib = strtol(prediction_only, nullptr, 0);
 
         const char* solution_index = std::getenv("TENSILE_SOLUTION_INDEX");
         if(solution_index)

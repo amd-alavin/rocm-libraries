@@ -722,9 +722,9 @@ if [[ "${install_dependencies}" == true ]]; then
 
   # The following builds googletest from source, installs into cmake default /usr/local
   build_lapack="ON"
-  if [[ "${use_system_packages}" == true || "${cpu_ref_lib}" == "blis" ]]; then
-    build_lapack="OFF"
-  fi
+  # if [[ "${use_system_packages}" == true || "${cpu_ref_lib}" == "blis" ]]; then
+  #   build_lapack="OFF"
+  # fi
   pushd .
     printf "\033[32mBuilding \033[33mgoogletest\033[32m from source; installing into \033[33m/usr/local\033[0m\n"
     mkdir -p ${build_dir}/deps && cd ${build_dir}/deps

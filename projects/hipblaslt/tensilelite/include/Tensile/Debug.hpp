@@ -58,7 +58,7 @@ namespace TensileLite
         bool printLookupEfficiency() const;
         bool printWinningKernelName() const;
 
-        bool usePredictionLibrary() const;
+        int usePredictionLibrary() const;
 
         bool printLibraryLogicIndex() const;
 
@@ -133,7 +133,7 @@ namespace TensileLite
         bool        m_dataParallel        = false;
         int         m_experimentSelection = 0;
         int         m_solution_index      = -1;
-        bool        m_predictionLib       = false;
+        int         m_predictionLib       = 0;
         std::string m_metric              = "";
         int         m_gridbasedTopSols    = 1;
         bool        m_benchmark           = false;

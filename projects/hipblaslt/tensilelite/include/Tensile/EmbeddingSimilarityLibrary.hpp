@@ -1058,30 +1058,38 @@ namespace TensileLite
             }
             return remSolutions;
         }
-
+        
         int inner_product(const std::vector<std::vector<float>>& solution_embeddings,
                           const std::vector<float>&              gemm_embedding,
                           std::vector<float>&                    scores) const
         {
+
+            const int n_solutions = static_cast<int>(solution_embeddings.size());
+            const int embedding_dim = static_cast<int>(gemm_embedding.size());
+            const float* __restrict__ gemm_ptr = gemm_embedding.data();
+
             short amax = 0;
             float vmax = std::numeric_limits<float>::lowest();
-            for(int i = 0; i < solution_embeddings.size(); i++)
+
+            for(int i = 0; i < n_solutions; ++i)
             {
-                auto& solution_embedding = solution_embeddings[i];
+                const float* __restrict__ sol_ptr = solution_embeddings[i].data();
 #ifdef __AVX2__
-                scores[i] = avx_dot(
-                    gemm_embedding.size(), solution_embedding.data(), gemm_embedding.data());
+                scores[i] = avx_dot(embedding_dim, sol_ptr, gemm_ptr);
 #else
                 scores[i] = 0.0f;
-                for(int j = 0; j < gemm_embedding.size(); j += 4)
+                for(int j = 0; j < embedding_dim; j += 4)
                 {
-                    float out0 = solution_embedding[j] * gemm_embedding[j];
-                    float out1 = solution_embedding[j + 1] * gemm_embedding[j + 1];
-                    float out2 = solution_embedding[j + 2] * gemm_embedding[j + 2];
-                    float out3 = solution_embedding[j + 3] * gemm_embedding[j + 3];
-                    scores[i] += out0 + out1 + out2 + out3;
+                    scores[i] += sol_ptr[j] * gemm_ptr[j] +
+                                 sol_ptr[j + 1] * gemm_ptr[j + 1] +
+                                 sol_ptr[j + 2] * gemm_ptr[j + 2] +
+                                 sol_ptr[j + 3] * gemm_ptr[j + 3];
                 }
 #endif
+            }
+
+            for(int i = 0; i < n_solutions; ++i)
+            {
                 if(scores[i] > vmax)
                 {
                     vmax = scores[i];
@@ -1090,6 +1098,7 @@ namespace TensileLite
             }
             return amax;
         }
+
     };
 
 } // namespace TensileLite

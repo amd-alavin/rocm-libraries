@@ -36,34 +36,48 @@
 #ifdef __AVX2__
 #include <immintrin.h> // For AVX intrinsics
 
-float avx_dot(int N, const float* A, const float* B)
+static inline float hsum_avx(__m256 v)
 {
-    float  dot_product = 0.0f;
-    __m256 sum_vec     = _mm256_setzero_ps(); // Initialize a 256-bit vector of zeros
-    int    i           = 0;
+    __m128 lo = _mm256_castps256_ps128(v);
+    __m128 hi = _mm256_extractf128_ps(v, 1);
+    __m128 s  = _mm_add_ps(lo, hi);
+    s         = _mm_hadd_ps(s, s);
+    s         = _mm_hadd_ps(s, s);
+    return _mm_cvtss_f32(s);
+}
 
-    // Process 8 floats at a time (for AVX)
-    for(; i < N - N % 8; i += 8)
+float avx_dot(int N, const float* __restrict__ A, const float* __restrict__ B)
+{
+    __m256 acc0 = _mm256_setzero_ps();
+    __m256 acc1 = _mm256_setzero_ps();
+    __m256 acc2 = _mm256_setzero_ps();
+    __m256 acc3 = _mm256_setzero_ps();
+
+    int i = 0;
+    for(; i <= N - 32; i += 32)
     {
-        __m256 a_vec    = _mm256_loadu_ps(&A[i]); // Load 8 floats from A
-        __m256 b_vec    = _mm256_loadu_ps(&B[i]); // Load 8 floats from B
-        __m256 prod_vec = _mm256_mul_ps(a_vec, b_vec); // Multiply element-wise
-        sum_vec         = _mm256_add_ps(sum_vec, prod_vec); // Add to accumulator
+        acc0 = _mm256_fmadd_ps(_mm256_loadu_ps(A + i),      _mm256_loadu_ps(B + i),      acc0);
+        acc1 = _mm256_fmadd_ps(_mm256_loadu_ps(A + i + 8),  _mm256_loadu_ps(B + i + 8),  acc1);
+        acc2 = _mm256_fmadd_ps(_mm256_loadu_ps(A + i + 16), _mm256_loadu_ps(B + i + 16), acc2);
+        acc3 = _mm256_fmadd_ps(_mm256_loadu_ps(A + i + 24), _mm256_loadu_ps(B + i + 24), acc3);
     }
-    // Horizontal sum of the accumulator vector
-    float temp_array[8];
-    _mm256_storeu_ps(temp_array, sum_vec);
-    for(int j = 0; j < 8; ++j)
+    acc0 = _mm256_add_ps(acc0, acc1);
+    acc2 = _mm256_add_ps(acc2, acc3);
+    acc0 = _mm256_add_ps(acc0, acc2);
+
+    for(; i <= N - 8; i += 8)
     {
-        dot_product += temp_array[j];
+        acc0 = _mm256_fmadd_ps(_mm256_loadu_ps(A + i), _mm256_loadu_ps(B + i), acc0);
     }
-    // Ramainder
+
+    float dot_product = hsum_avx(acc0);
     for(; i < N; ++i)
     {
         dot_product += A[i] * B[i];
     }
     return dot_product;
 }
+
 #endif
 
 namespace TensileLite
@@ -114,30 +128,34 @@ namespace TensileLite
             size_t             output_dim = bias.size();
             std::vector<float> output     = bias;
 
+            const float* __restrict__ in_ptr = input.data();
+            const float* __restrict__ w_ptr  = weights.data();
+            float* __restrict__ out_ptr      = output.data();
+
             for(size_t j = 0; j < output_dim; ++j)
             {
-#ifdef __AVX2__
-                output[j] += avx_dot(input_dim, input.data(), weights.data() + j * input_dim);
-#else
+        #ifdef __AVX2__
+                out_ptr[j] += avx_dot(static_cast<int>(input_dim), in_ptr, w_ptr + j * input_dim);
+        #else
                 int k = 0;
                 int offset = j * input_dim;
                 for(; k < input_dim - input_dim % 8; k += 8, offset += 8)
                 {
-                    float out0 = input[k] * weights[offset];
-                    float out1 = input[k + 1] * weights[offset + 1];
-                    float out2 = input[k + 2] * weights[offset + 2];
-                    float out3 = input[k + 3] * weights[offset + 3];
-                    float out4 = input[k + 4] * weights[offset + 4];
-                    float out5 = input[k + 5] * weights[offset + 5];
-                    float out6 = input[k + 6] * weights[offset + 6];
-                    float out7 = input[k + 7] * weights[offset + 7];
-                    output[j] += out0 + out1 + out2 + out3 + out4 + out5 + out6 + out7;
+                    float out0 = in_ptr[k] * w_ptr[offset];
+                    float out1 = in_ptr[k + 1] * w_ptr[offset + 1];
+                    float out2 = in_ptr[k + 2] * w_ptr[offset + 2];
+                    float out3 = in_ptr[k + 3] * w_ptr[offset + 3];
+                    float out4 = in_ptr[k + 4] * w_ptr[offset + 4];
+                    float out5 = in_ptr[k + 5] * w_ptr[offset + 5];
+                    float out6 = in_ptr[k + 6] * w_ptr[offset + 6];
+                    float out7 = in_ptr[k + 7] * w_ptr[offset + 7];
+                    out_ptr[j] += out0 + out1 + out2 + out3 + out4 + out5 + out6 + out7;
                 }
                 for(; k < input_dim; k++, offset++)
                 {
-                    output[j] += input[k] * weights[offset];
+                    out_ptr[j] += in_ptr[k] * w_ptr[offset];
                 }
-#endif
+        #endif
             }
             return output;
         }

@@ -10,6 +10,7 @@ check_cxx_compiler_flag("-mavx2" COMPILER_SUPPORTS_AVX2_GCC)
 check_cxx_compiler_flag("/arch:AVX2" COMPILER_SUPPORTS_AVX2_MSVC)
 if(COMPILER_SUPPORTS_AVX2_GCC)
     set(AVX2_FLAG "-mavx2")
+    set(FMA_FLAG "-mfma")
 elseif(COMPILER_SUPPORTS_AVX2_MSVC)
     set(AVX2_FLAG "/arch:AVX2")
 endif()
@@ -29,7 +30,7 @@ if(TENSILELITE_ENABLE_HOST)
             CXX_VISIBILITY_PRESET hidden
             VISIBILITY_INLINES_HIDDEN ON
     )
-    target_compile_options(tensilelite-host PUBLIC ${AVX2_FLAG})
+    target_compile_options(tensilelite-host PUBLIC ${AVX2_FLAG} ${FMA_FLAG})
     target_compile_features(tensilelite-host PUBLIC cxx_std_17)
     target_compile_definitions(tensilelite-host
         PUBLIC

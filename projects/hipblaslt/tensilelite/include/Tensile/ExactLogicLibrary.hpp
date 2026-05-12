@@ -37,6 +37,7 @@
 #include <Tensile/Predicates.hpp>
 #include <Tensile/SolutionLibrary.hpp>
 
+
 namespace TensileLite
 {
     /**
@@ -264,21 +265,30 @@ namespace TensileLite
             SolutionVector<MySolution> rv, solutions;
             const bool                 debug   = Debug::Instance().printPropertyEvaluation();
             const bool                 streamK = Debug::Instance().useExperimentalSelection() == 2;
-            const bool                 predictionLib = Debug::Instance().usePredictionLibrary();
+            const int                  predictionLib = Debug::Instance().usePredictionLibrary();
 
             // false in case of early return;
             lastFindTopRetAll = false;
-
+            
             for(auto const& row : rows)
-            {
+            {   
                 if(row.first.value->type() == "ExperimentalStreamK" && !streamK)
                     continue;
-                
-                if(predictionLib && ((row.first.value->type() == "EqualityMatching")
-                                     || (row.first.value->type() == "RangeMatching")
-                                     || (row.first.value->type() == "Embedding"))) // TODO create separate origami 
-                    continue;
 
+                switch(predictionLib)
+                {
+                case 1: // Origami
+                    if((row.first.value->type() == "EqualityMatching") || (row.first.value->type() == "RangeMatching") || (row.first.value->type() == "Embedding"))
+                        continue;
+                    break;
+                case 2: // EmbeddingSimilarity
+                    if((row.first.value->type() == "EqualityMatching") || (row.first.value->type() == "RangeMatching") || (row.first.value->type() == "PredictionMatching"))
+                        continue;
+                    break;
+                default: // 0 or disabled
+                    break;
+                }
+               
                 if(row.first(problem, hardware))
                 {
                     solutions
