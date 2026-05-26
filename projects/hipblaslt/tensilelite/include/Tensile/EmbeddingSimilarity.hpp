@@ -35,9 +35,30 @@
 
 #ifdef __AVX2__
 float avx_dot(int N, const float* __restrict__ A, const float* __restrict__ B);
+#if defined(__AVX512F__) && defined(__AVX512BF16__)
+float avx_dot_bf16(int N, const uint16_t* __restrict__ A, const uint16_t* __restrict__ B);
+#else
+float avx_dot_bf16(int N, const float* __restrict__ A, const uint16_t* __restrict__ B);
+#endif
 #endif
 
+    static inline uint16_t float_to_bf16_rne(float x)
+{
+    uint32_t u;
+    std::memcpy(&u, &x, sizeof(u));
+    const uint32_t lsb           = (u >> 16) & 1u;
+    const uint32_t rounding_bias = 0x7FFFu + lsb;
+    u += rounding_bias;
+    return static_cast<uint16_t>(u >> 16);
+}
 
+static inline float bf16_to_float(uint16_t b)
+{
+    uint32_t u = static_cast<uint32_t>(b) << 16;
+    float    out;
+    std::memcpy(&out, &u, sizeof(out));
+    return out;
+}
 
 namespace TensileLite
 {
@@ -71,21 +92,25 @@ namespace TensileLite
 
         struct Network
         {
-            Network() = default;
+            using Matrix      = std::vector<std::vector<dtype>>;
+            using Vector      = std::vector<dtype>;
+            using ForwardImpl = std::vector<dtype> (Network::*)(const std::vector<dtype>&) const;
 
+            void               quantize();
             std::vector<dtype> operator()(const std::vector<dtype>& F) const;
+            bool               valid(bool verbose) const;
 
-            bool valid(bool verbose = false) const;
+            std::vector<dtype> forward_fp32_(const std::vector<dtype>& F) const;
+            std::vector<dtype> forward_bf16_(const std::vector<dtype>& F) const;
 
-            std::string description() const
-            {
-                return "Network";
-            }
+            Matrix                             weights_;
+            Matrix                             bias_;
+            Vector                             proj_weights_;
+            Vector                             proj_bias_;
+            std::vector<std::vector<uint16_t>> weights_bf16_;
+            std::vector<uint16_t>              proj_weights_bf16_;
 
-            std::vector<std::vector<TensileLite::EmbeddingSimilarity::dtype>> weights;
-            std::vector<std::vector<TensileLite::EmbeddingSimilarity::dtype>> bias;
-            std::vector<TensileLite::EmbeddingSimilarity::dtype>              proj_weights;
-            std::vector<TensileLite::EmbeddingSimilarity::dtype>              proj_bias;
+            ForwardImpl forward_impl_ = &Network::forward_fp32_;
         };
 
         struct Encoder
@@ -114,11 +139,12 @@ namespace TensileLite
                 return "SolutionEmbeddings";
             }
 
-            std::vector<std::vector<float>>              centroids;
-            std::vector<std::vector<std::vector<float>>> embeddings;
-            std::vector<std::vector<int>>                cluster_indices; 
-
-            std::size_t size() const
+            std::vector<std::vector<float>>                 centroids;
+            std::vector<std::vector<std::vector<float>>>    embeddings;
+            std::vector<std::vector<uint16_t>>              centroids_bf16;
+            std::vector<std::vector<std::vector<uint16_t>>> embeddings_bf16;
+            std::vector<std::vector<int>>                   cluster_indices;
+            std::size_t                                     size() const
             {
                 std::set<int> unique_values;
                 for(const auto& cluster : cluster_indices)
@@ -127,43 +153,46 @@ namespace TensileLite
                 }
                 return unique_values.size();
             }
+            void quantize();
         };
 
         struct HardwareConstants
-          {
-              HardwareConstants() = default;
+        {
+            HardwareConstants() = default;
 
-              std::string description() const
-              {
-                  return "HardwareConstants";
-              }
+            std::string description() const
+            {
+                return "HardwareConstants";
+            }
 
-              bool valid(bool verbose = false) const
-              {
-                  bool rv = true;
-                  if(n_cu <= 0)
-                  {
-                      if(verbose) std::cout << "Invalid n_cu: " << n_cu << std::endl;
-                      rv = false;
-                  }
-                  if(peak_flops <= 0.0f || mem_bw <= 0.0f)
-                  {
-                      if(verbose) std::cout << "Invalid peak_flops or mem_bw" << std::endl;
-                      rv = false;
-                  }
-                  return rv;
-              }
+            bool valid(bool verbose = false) const
+            {
+                bool rv = true;
+                if(n_cu <= 0)
+                {
+                    if(verbose)
+                        std::cout << "Invalid n_cu: " << n_cu << std::endl;
+                    rv = false;
+                }
+                if(peak_flops <= 0.0f || mem_bw <= 0.0f)
+                {
+                    if(verbose)
+                        std::cout << "Invalid peak_flops or mem_bw" << std::endl;
+                    rv = false;
+                }
+                return rv;
+            }
 
-              int n_cu = 256;
-              float peak_flops = 2.3e15f;
-              float mem_bw = 8e12f;
-              float l1_size = 32.0f * 1024.0f;
-              float l2_size = 4.0f * 1024.0f * 1024.0f;
-              float l3_size = 256.0f * 1024.0f * 1024.0f;
-              float wave_size = 64.0f;
-              float dtype_size = 2.0f;
-              float acc_size = 4.0f;
-          };
+            int   n_cu       = 256;
+            float peak_flops = 2.3e15f;
+            float mem_bw     = 8e12f;
+            float l1_size    = 32.0f * 1024.0f;
+            float l2_size    = 4.0f * 1024.0f * 1024.0f;
+            float l3_size    = 256.0f * 1024.0f * 1024.0f;
+            float wave_size  = 64.0f;
+            float dtype_size = 2.0f;
+            float acc_size   = 4.0f;
+        };
 
     } // namespace EmbeddingSimilarity
 } // namespace TensileLite

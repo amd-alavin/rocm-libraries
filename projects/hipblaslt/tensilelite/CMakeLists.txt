@@ -4,15 +4,42 @@
 add_subdirectory(rocisa)
 
 include(CheckCXXCompilerFlag)
-# Check for GCC/Clang flag
-check_cxx_compiler_flag("-mavx2" COMPILER_SUPPORTS_AVX2_GCC)
-# Check for MSVC flag
-check_cxx_compiler_flag("/arch:AVX2" COMPILER_SUPPORTS_AVX2_MSVC)
-if(COMPILER_SUPPORTS_AVX2_GCC)
-    set(AVX2_FLAG "-mavx2")
-    set(FMA_FLAG "-mfma")
-elseif(COMPILER_SUPPORTS_AVX2_MSVC)
-    set(AVX2_FLAG "/arch:AVX2")
+
+option(TENSILELITE_ENABLE_NATIVE_CPU "Enable -march=native for GCC/Clang builds" ON)
+
+set(HOST_ISA_COMPILE_FLAGS "")
+
+if(MSVC)
+    check_cxx_compiler_flag("/arch:AVX512" COMPILER_SUPPORTS_AVX512_MSVC)
+    check_cxx_compiler_flag("/arch:AVX2" COMPILER_SUPPORTS_AVX2_MSVC)
+
+    if(COMPILER_SUPPORTS_AVX512_MSVC)
+        list(APPEND HOST_ISA_COMPILE_FLAGS "/arch:AVX512")
+    elseif(COMPILER_SUPPORTS_AVX2_MSVC)
+        list(APPEND HOST_ISA_COMPILE_FLAGS "/arch:AVX2")
+    endif()
+else()
+    if(TENSILELITE_ENABLE_NATIVE_CPU)
+        check_cxx_compiler_flag("-march=native" COMPILER_SUPPORTS_MARCH_NATIVE)
+    endif()
+
+    check_cxx_compiler_flag("-mavx512f" COMPILER_SUPPORTS_AVX512F)
+    check_cxx_compiler_flag("-mavx512bf16" COMPILER_SUPPORTS_AVX512BF16)
+    check_cxx_compiler_flag("-mavx512dq" COMPILER_SUPPORTS_AVX512DQ)
+    check_cxx_compiler_flag("-mavx512vl" COMPILER_SUPPORTS_AVX512VL)
+    check_cxx_compiler_flag("-mfma" COMPILER_SUPPORTS_FMA)
+    check_cxx_compiler_flag("-mavx2" COMPILER_SUPPORTS_AVX2)
+
+    if(TENSILELITE_ENABLE_NATIVE_CPU AND COMPILER_SUPPORTS_MARCH_NATIVE)
+        list(APPEND HOST_ISA_COMPILE_FLAGS "-march=native")
+    elseif(COMPILER_SUPPORTS_AVX512F AND COMPILER_SUPPORTS_AVX512BF16 AND COMPILER_SUPPORTS_AVX512DQ AND COMPILER_SUPPORTS_AVX512VL AND COMPILER_SUPPORTS_FMA)
+        list(APPEND HOST_ISA_COMPILE_FLAGS "-mavx512f" "-mavx512bf16" "-mavx512dq" "-mavx512vl" "-mfma")
+    elseif(COMPILER_SUPPORTS_AVX2)
+        list(APPEND HOST_ISA_COMPILE_FLAGS "-mavx2")
+        if(COMPILER_SUPPORTS_FMA)
+            list(APPEND HOST_ISA_COMPILE_FLAGS "-mfma")
+        endif()
+    endif()
 endif()
  
 if(TENSILELITE_ENABLE_AUTOBUILD)
@@ -30,7 +57,7 @@ if(TENSILELITE_ENABLE_HOST)
             CXX_VISIBILITY_PRESET hidden
             VISIBILITY_INLINES_HIDDEN ON
     )
-    target_compile_options(tensilelite-host PUBLIC ${AVX2_FLAG} ${FMA_FLAG})
+    target_compile_options(tensilelite-host PUBLIC ${HOST_ISA_COMPILE_FLAGS})
     target_compile_features(tensilelite-host PUBLIC cxx_std_17)
     target_compile_definitions(tensilelite-host
         PUBLIC

@@ -37,6 +37,7 @@
 #include <Tensile/ContractionProblem_Detail.hpp>
 #include <Tensile/TensorDescriptor_Detail.hpp>
 
+
 namespace TensileLite
 {
     template <typename Value, typename Key, typename... Keys>
@@ -157,19 +158,16 @@ namespace TensileLite
     class CachingLibrary : public SolutionLibrary<MyProblem, MySolution>
     {
     public:
-        using Library = SolutionLibrary<MyProblem, MySolution>;
-        using Cache  = CacheMap<std::tuple<std::shared_ptr<MySolution>, double>, AMDGPU, MyProblem>;
-        using Caches = CacheMap<SolutionVector<MySolution>, AMDGPU, MyProblem>;
-        using CachesAllSolsFlag
-            = CacheMap<bool, AMDGPU, MyProblem>;
+        using Library    = SolutionLibrary<MyProblem, MySolution>;
+        using Cache      = CacheMap<std::tuple<std::shared_ptr<MySolution>, double>, AMDGPU, size_t>;
+        using CachesPair = CacheMap<std::pair<SolutionVector<MySolution>, bool>, AMDGPU, size_t>;
         using CachesGroupedGemm
             = CacheMap<SolutionVector<MySolution>, AMDGPU, std::vector<MyProblem>>;
 
         CachingLibrary(std::shared_ptr<Library> subLibrary)
             : m_subLibrary(subLibrary)
             , m_cache(std::make_tuple(nullptr, std::numeric_limits<double>::max()))
-            , m_caches(SolutionVector<MySolution>{})
-            , m_cachesAllSolutions(false)
+            , m_caches(std::make_pair(SolutionVector<MySolution>{}, false))
             , m_cachesGroupedGemm(SolutionVector<MySolution>{})
         {
         }
@@ -191,16 +189,17 @@ namespace TensileLite
                 double cachedFitness = std::numeric_limits<double>::max();
                 fitness              = (fitness) ? fitness : &cachedFitness;
 
-                auto const&                 amdgpu = dynamic_cast<AMDGPU const&>(hardware);
+                auto const&                 amdgpu      = dynamic_cast<AMDGPU const&>(hardware);
+                const size_t                problemHash = std::hash<MyProblem>{}(problem);
                 std::shared_ptr<MySolution> solution;
-                std::tie(solution, *fitness) = m_cache.find(problem, amdgpu);
+                std::tie(solution, *fitness) = m_cache.find(problemHash, amdgpu);
 
                 if(solution)
                     return solution;
 
                 solution = m_subLibrary->findBestSolution(problem, hardware, fitness);
                 if(solution)
-                    m_cache.add(std::make_tuple(solution, *fitness), problem, amdgpu);
+                    m_cache.add(std::make_tuple(solution, *fitness), problemHash, amdgpu);
 
                 return solution;
             }
@@ -231,9 +230,10 @@ namespace TensileLite
         std::shared_ptr<MySolution> findSolutionInCache(MyProblem const& problem,
                                                         Hardware const&  hardware) const
         {
-            auto const& amdgpu = dynamic_cast<AMDGPU const&>(hardware);
+            auto const&  amdgpu      = dynamic_cast<AMDGPU const&>(hardware);
+            const size_t problemHash = std::hash<MyProblem>{}(problem);
 
-            return std::get<std::shared_ptr<MySolution>>(m_cache.find(problem, amdgpu));
+            return std::get<std::shared_ptr<MySolution>>(m_cache.find(problemHash, amdgpu));
         }
 
         virtual std::string type() const override
@@ -256,11 +256,11 @@ namespace TensileLite
         {
             try
             {
-                auto const&                amdgpu = dynamic_cast<AMDGPU const&>(hardware);
-                SolutionVector<MySolution> solutions;
-                bool                       cacheAlreadyContainAll;
-                solutions = m_caches.find(problem, amdgpu);
-                cacheAlreadyContainAll = m_cachesAllSolutions.find(problem, amdgpu);
+                auto const&                amdgpu      = dynamic_cast<AMDGPU const&>(hardware);
+                const size_t               problemHash = std::hash<MyProblem>{}(problem);
+                auto                       cached      = m_caches.find(problemHash, amdgpu);
+                SolutionVector<MySolution> solutions   = std::move(cached.first);
+                bool                       cacheAlreadyContainAll = cached.second;
                 // set flag in case of early return
                 lastFindTopRetAll = cacheAlreadyContainAll;
 
@@ -271,8 +271,7 @@ namespace TensileLite
                 if(solutions.size() != 0)
                 {
                     bool alreadyRetAll = m_subLibrary->lastFindTopAlreadyRetAll();
-                    m_caches.add(solutions, problem, amdgpu);
-                    m_cachesAllSolutions.add(alreadyRetAll, problem, amdgpu);
+                    m_caches.add(std::make_pair(solutions, alreadyRetAll), problemHash, amdgpu);
                     // debug
                     // std::cout << "m_cachesAllSolutions.add() with solution.size() = " << solutions.size()
                     //           << " and alreadyRetAll: " << (alreadyRetAll? "True" : "False") << std::endl;
@@ -326,8 +325,7 @@ namespace TensileLite
     private:
         std::shared_ptr<Library>  m_subLibrary;
         mutable Cache             m_cache;
-        mutable Caches            m_caches;
-        mutable CachesAllSolsFlag m_cachesAllSolutions;
+        mutable CachesPair        m_caches;
         mutable CachesGroupedGemm m_cachesGroupedGemm;
         mutable std::atomic<bool> lastFindTopRetAll = false;
     };

@@ -78,11 +78,11 @@ namespace TensileLite
 
             static void mapping(IO& io, Network& net)
             {
-                iot::mapRequired(io, "proj_weights", net.proj_weights);
-                iot::mapRequired(io, "proj_bias", net.proj_bias);
+                iot::mapRequired(io, "proj_weights", net.proj_weights_);
+                iot::mapRequired(io, "proj_bias", net.proj_bias_);
 
-                iot::mapRequired(io, "weights", net.weights);
-                iot::mapRequired(io, "bias", net.bias);
+                iot::mapRequired(io, "weights", net.weights_);
+                iot::mapRequired(io, "bias", net.bias_);
             }
             const static bool flow = false;
         };
@@ -99,7 +99,7 @@ namespace TensileLite
                 iot::mapRequired(io, "cluster_indices", data.cluster_indices);
                 iot::mapRequired(io, "centroids", data.centroids);
             }
-
+            
             const static bool flow = false;
         };
 
@@ -216,6 +216,14 @@ namespace TensileLite
                 }
                 iot::mapRequired(io, "hardware_constants", *hw_constants);
 
+                bool quantize = false;
+                iot::mapOptional(io, "quantize", quantize);
+                
+                if (quantize)
+                {
+                    lib.quantize();
+                }
+
                 // Validación
                 if(!hw_constants->valid())
                     throw std::runtime_error(
@@ -232,7 +240,7 @@ namespace TensileLite
                     throw std::runtime_error(
                         "ERROR: EmbeddingSimilarity library solution embeddings amount equals 0");
 
-                if(lib.encoder->network.proj_bias.size() != embeddings->embeddings[0][0].size())
+                if(lib.encoder->network.proj_bias_.size() != embeddings->embeddings[0][0].size())
                     throw std::runtime_error(
                         "ERROR: EmbeddingSimilarity library solution embeddings size "
                         "does not match the network output size.");
