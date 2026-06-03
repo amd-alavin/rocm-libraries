@@ -1122,6 +1122,16 @@ namespace TensileLite
                                               (uint8_t*)inputs.ws + workspaceOffsetInByte);
             args.template append<const void*>("AmaxSync", inputs.Synchronizer);
         }
+
+        // Batch offset support for General Batched GEMM (SupportUserArgs kernels)
+        // Placed at the end of the parameter list
+//        if(!problemType.groupedGemm)
+//        {
+//            args.template append<int64_t>("batchOffsetD", inputs.batchOffsetD);
+//            args.template append<int64_t>("batchOffsetC", inputs.batchOffsetC);
+//            args.template append<int64_t>("batchOffsetA", inputs.batchOffsetA);
+//            args.template append<int64_t>("batchOffsetB", inputs.batchOffsetB);
+//        }
     }
 
     inline uint32_t getNumWorkGroups(const KernelInvocation& rv)
