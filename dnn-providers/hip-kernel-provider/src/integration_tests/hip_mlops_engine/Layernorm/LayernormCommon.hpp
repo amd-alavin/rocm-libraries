@@ -17,16 +17,16 @@ struct LayernormTestCase
 {
     std::vector<int64_t> dims;
     size_t normalizedDim;
-    bool weightBias;
+    bool optionalTensors;
     unsigned int seed;
 
     LayernormTestCase(std::vector<int64_t>&& dimsLocal,
                       size_t normalizedDimLocal,
-                      bool weightBiasLocal,
+                      bool optionalTensorsLocal,
                       unsigned int seedLocal)
         : dims(std::move(dimsLocal))
         , normalizedDim(normalizedDimLocal)
-        , weightBias(weightBiasLocal)
+        , optionalTensors(optionalTensorsLocal)
         , seed(seedLocal)
     {
         if(dims.size() != 4 && dims.size() != 5)
@@ -41,6 +41,7 @@ struct LayernormTestCase
         ss << "(dims:";
         hipdnn_data_sdk::utilities::vecToStream(ss, testCase.dims);
         ss << " normalizedDim:" << testCase.normalizedDim;
+        ss << " optionalTensors:" << testCase.optionalTensors;
         ss << " seed:" << testCase.seed;
         ss << ")";
 
@@ -48,7 +49,7 @@ struct LayernormTestCase
     }
 };
 
-inline std::vector<LayernormTestCase> getLayernormFwd4DSmokeTestCases()
+inline std::vector<LayernormTestCase> getLayernorm4DSmokeTestCases()
 {
     unsigned int seed = hipdnn_test_sdk::utilities::getGlobalTestSeed();
 
@@ -65,7 +66,7 @@ inline std::vector<LayernormTestCase> getLayernormFwd4DSmokeTestCases()
     // clang-format on
 };
 
-inline std::vector<LayernormTestCase> getLayernormFwd5DSmokeTestCases()
+inline std::vector<LayernormTestCase> getLayernorm5DSmokeTestCases()
 {
     unsigned int seed = hipdnn_test_sdk::utilities::getGlobalTestSeed();
 
@@ -84,7 +85,7 @@ inline std::vector<LayernormTestCase> getLayernormFwd5DSmokeTestCases()
     // clang-format on
 };
 
-inline std::vector<LayernormTestCase> getLayernormFwd4DFullTestCases()
+inline std::vector<LayernormTestCase> getLayernorm4DFullTestCases()
 {
     unsigned int seed = hipdnn_test_sdk::utilities::getGlobalTestSeed();
 
@@ -99,7 +100,7 @@ inline std::vector<LayernormTestCase> getLayernormFwd4DFullTestCases()
     // clang-format on
 }
 
-inline std::vector<LayernormTestCase> getLayernormFwd5DFullTestCases()
+inline std::vector<LayernormTestCase> getLayernorm5DFullTestCases()
 {
     unsigned int seed = hipdnn_test_sdk::utilities::getGlobalTestSeed();
 

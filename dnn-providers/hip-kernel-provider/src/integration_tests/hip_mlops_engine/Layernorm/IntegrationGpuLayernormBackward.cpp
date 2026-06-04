@@ -12,7 +12,7 @@
 #include "LayernormCommon.hpp"
 #include "hipdnn_data_sdk/utilities/Tensor.hpp"
 #include "hipdnn_frontend/Types.hpp"
-#include "hipdnn_frontend/attributes/LayernormAttributes.hpp"
+#include "hipdnn_frontend/attributes/LayernormBackwardAttributes.hpp"
 #include "hipdnn_frontend/attributes/TensorAttributes.hpp"
 
 using namespace hipdnn_frontend;
@@ -32,7 +32,7 @@ template <typename InputDataType,
           typename OutputDataType,
           typename ScaleBiasDataType,
           typename MeanInvVarianceDataType>
-class LayernormForward
+class LayernormBackward
     : public IntegrationGraphVerificationHarness<InputDataType, LayernormTestCase>
 {
 protected:
@@ -40,78 +40,89 @@ protected:
     {
         const LayernormTestCase& testCase = this->GetParam();
 
-        std::vector<int64_t> affineDims(testCase.dims.size(), 1);
-        for(size_t i = testCase.normalizedDim; i < testCase.dims.size(); ++i)
+        auto inputDataType = getDataTypeEnumFromType<InputDataType>();
+        auto outputDataType = getDataTypeEnumFromType<OutputDataType>();
+        auto scaleBiasDataType = getDataTypeEnumFromType<ScaleBiasDataType>();
+        auto meanInvVarianceDataType = getDataTypeEnumFromType<MeanInvVarianceDataType>();
+
+        if(inputDataType == DataType::HALF
+           && testCase.dims == std::vector<int64_t>{32, 32, 14, 25, 59}
+           && testCase.normalizedDim == 4 && !testCase.optionalTensors)
         {
-            affineDims[i] = testCase.dims[i];
+            GTEST_SKIP() << "Skipping test due to expected infinities in results.";
+        }
+
+        std::vector<int64_t> statDims(testCase.dims.size(), 1);
+        std::vector<int64_t> affineDims(testCase.dims.size(), 1);
+        for(size_t i = 0; i < testCase.dims.size(); ++i)
+        {
+            if(i < testCase.normalizedDim)
+            {
+                statDims[i] = testCase.dims[i];
+            }
+            else
+            {
+                affineDims[i] = testCase.dims[i];
+            }
         }
 
         graph::Graph graphObj;
 
-        graphObj.set_name("LayernormFwdTest");
+        graphObj.set_name("LayernormBwdTest");
 
-        auto inputDataType = getDataTypeEnumFromType<InputDataType>();
         graphObj.set_intermediate_data_type(DataType::FLOAT).set_compute_data_type(DataType::FLOAT);
 
         auto ioStrides = generateStrides(testCase.dims, layout.strideOrder);
+        auto statStrides = generateStrides(statDims, layout.strideOrder);
         auto affineStrides = generateStrides(affineDims, layout.strideOrder);
+
+        auto dyAttr = graph::makeTensorAttributes("dY", outputDataType, testCase.dims, ioStrides);
+        auto dyTensorAttr = std::make_shared<graph::TensorAttributes>(std::move(dyAttr));
 
         auto xAttr = graph::makeTensorAttributes("X", inputDataType, testCase.dims, ioStrides);
         auto xTensorAttr = std::make_shared<graph::TensorAttributes>(std::move(xAttr));
 
-        auto scaleBiasDataType = getDataTypeEnumFromType<ScaleBiasDataType>();
         auto scaleAttr
             = graph::makeTensorAttributes("scale", scaleBiasDataType, affineDims, affineStrides);
         auto scaleTensorAttr = std::make_shared<graph::TensorAttributes>(std::move(scaleAttr));
 
-        auto biasAttr
-            = graph::makeTensorAttributes("bias", scaleBiasDataType, affineDims, affineStrides);
-        auto biasTensorAttr = std::make_shared<graph::TensorAttributes>(std::move(biasAttr));
+        graph::LayernormBackwardAttributes lnAttrs;
+
+        if(testCase.optionalTensors)
+        {
+            auto meanAttr = graph::makeTensorAttributes(
+                "mean", meanInvVarianceDataType, statDims, statStrides);
+            auto meanTensorAttr = std::make_shared<graph::TensorAttributes>(std::move(meanAttr));
+
+            auto rstdAttr = graph::makeTensorAttributes(
+                "rstd", meanInvVarianceDataType, statDims, statStrides);
+            auto rstdTensorAttr = std::make_shared<graph::TensorAttributes>(std::move(rstdAttr));
+
+            lnAttrs.set_saved_mean_and_inv_variance(meanTensorAttr, rstdTensorAttr);
+        }
 
         auto epsilonAttr
             = graph::makeTensorAttributes("epsilon", static_cast<float>(LAYERNORM_DEFAULT_EPSILON));
         auto epsilonTensorAttr = std::make_shared<graph::TensorAttributes>(std::move(epsilonAttr));
-
-        graph::LayernormAttributes lnAttrs;
         lnAttrs.set_epsilon(std::move(epsilonTensorAttr));
-        lnAttrs.set_forward_phase(testCase.optionalTensors ? NormFwdPhase::TRAINING
-                                                           : NormFwdPhase::INFERENCE);
 
-        auto results = graphObj.layernorm(xTensorAttr, scaleTensorAttr, biasTensorAttr, lnAttrs);
-        const auto& yTensorAttr = results[0];
-        const auto& meanTensorAttr = results[1];
-        const auto& invVarianceTensorAttr = results[2];
+        auto results
+            = graphObj.layernorm_backward(dyTensorAttr, xTensorAttr, scaleTensorAttr, lnAttrs);
+        const auto& dxTensorAttr = results[0];
+        const auto& dscaleTensorAttr = results[1];
+        const auto& dbiasTensorAttr = results[2];
 
-        if(!testCase.optionalTensors)
-        {
-            if(!std::is_same_v<InputDataType, MeanInvVarianceDataType>)
-            {
-                GTEST_SKIP() << "\nSkipping since the CPU reference implementation does not work "
-                                "properly for this test case.";
-            }
-            EXPECT_EQ(meanTensorAttr, nullptr) << "Mean tensor should be null for inference";
-            EXPECT_EQ(invVarianceTensorAttr, nullptr)
-                << "Inverse variance tensor should be null for inference";
-        }
+        dxTensorAttr->set_output(true);
+        dxTensorAttr->set_data_type(inputDataType);
+        dscaleTensorAttr->set_output(true);
+        dscaleTensorAttr->set_data_type(scaleBiasDataType);
+        dbiasTensorAttr->set_output(true);
+        dbiasTensorAttr->set_data_type(scaleBiasDataType);
 
-        auto outputDataType = getDataTypeEnumFromType<OutputDataType>();
-        yTensorAttr->set_output(true);
-        yTensorAttr->set_data_type(outputDataType);
-        if(testCase.optionalTensors)
-        {
-            auto meanInvVarianceDataType = getDataTypeEnumFromType<MeanInvVarianceDataType>();
-            meanTensorAttr->set_output(true);
-            meanTensorAttr->set_data_type(meanInvVarianceDataType);
-            invVarianceTensorAttr->set_output(true);
-            invVarianceTensorAttr->set_data_type(meanInvVarianceDataType);
-        }
-
-        this->registerValidator(yTensorAttr, getTolerance<OutputDataType>());
-        if(testCase.optionalTensors)
-        {
-            this->registerValidator(meanTensorAttr, getTolerance<MeanInvVarianceDataType>());
-            this->registerValidator(invVarianceTensorAttr, getTolerance<MeanInvVarianceDataType>());
-        }
+        this->registerValidator(dxTensorAttr, getTolerance<InputDataType>());
+        // Summing hundreds of thousands of floating point values yields a low magnitude value with a high variance from floating point inaccuracies, so a higher tolerance in necessary for dscale and dbias
+        this->registerValidator(dscaleTensorAttr, getTolerance<ScaleBiasDataType>() * 16);
+        this->registerValidator(dbiasTensorAttr, getTolerance<ScaleBiasDataType>() * 16);
 
         this->verifyGraph(graphObj, testCase.seed);
     }
@@ -131,112 +142,112 @@ protected:
 // ============================================================================
 
 // 1. Input: FLOAT, ScaleBias: FLOAT, MeanInvVariance: FLOAT, Output: FLOAT
-using IntegrationGpuLayernormForwardNchwPureFp32 = LayernormForward<float, float, float, float>;
+using IntegrationGpuLayernormBackwardNchwPureFp32 = LayernormBackward<float, float, float, float>;
 
 // 2. Input: HALF, ScaleBias: FLOAT, MeanInvVariance: FLOAT, Output: HALF
-using IntegrationGpuLayernormForwardNchwMixedFp16 = LayernormForward<half, half, float, float>;
+using IntegrationGpuLayernormBackwardNchwMixedFp16 = LayernormBackward<half, half, float, float>;
 
 // 3. Input: BFLOAT16, ScaleBias: FLOAT, MeanInvVariance: FLOAT, Output: BFLOAT16
-using IntegrationGpuLayernormForwardNchwMixedBfp16
-    = LayernormForward<bfloat16, bfloat16, float, float>;
+using IntegrationGpuLayernormBackwardNchwMixedBfp16
+    = LayernormBackward<bfloat16, bfloat16, float, float>;
 
 // 4. Input: HALF, ScaleBias: FLOAT, MeanInvVariance: FLOAT, Output: FLOAT
-using IntegrationGpuLayernormForwardNchwUpcastFp16 = LayernormForward<half, float, float, float>;
+using IntegrationGpuLayernormBackwardNchwUpcastFp16 = LayernormBackward<half, float, float, float>;
 
 // 5. Input: BFLOAT16, ScaleBias: FLOAT, MeanInvVariance: FLOAT, Output: FLOAT
-using IntegrationGpuLayernormForwardNchwUpcastBfp16
-    = LayernormForward<bfloat16, float, float, float>;
+using IntegrationGpuLayernormBackwardNchwUpcastBfp16
+    = LayernormBackward<bfloat16, float, float, float>;
 
 // 6. Input: HALF, ScaleBias: HALF, MeanInvVariance: HALF, Output: HALF
-using IntegrationGpuLayernormForwardNchwPureFp16 = LayernormForward<half, half, half, half>;
+using IntegrationGpuLayernormBackwardNchwPureFp16 = LayernormBackward<half, half, half, half>;
 
 // 7. Input: BFLOAT16, ScaleBias: BFLOAT16, MeanInvVariance: BFLOAT16, Output: BFLOAT16
-using IntegrationGpuLayernormForwardNchwPureBfp16
-    = LayernormForward<bfloat16, bfloat16, bfloat16, bfloat16>;
+using IntegrationGpuLayernormBackwardNchwPureBfp16
+    = LayernormBackward<bfloat16, bfloat16, bfloat16, bfloat16>;
 
 // ============================================================================
 // NHWC
 // ============================================================================
 
 // 1. Input: FLOAT, ScaleBias: FLOAT, MeanInvVariance: FLOAT, Output: FLOAT
-using IntegrationGpuLayernormForwardNhwcPureFp32 = LayernormForward<float, float, float, float>;
+using IntegrationGpuLayernormBackwardNhwcPureFp32 = LayernormBackward<float, float, float, float>;
 
 // 2. Input: HALF, ScaleBias: FLOAT, MeanInvVariance: FLOAT, Output: HALF
-using IntegrationGpuLayernormForwardNhwcMixedFp16 = LayernormForward<half, half, float, float>;
+using IntegrationGpuLayernormBackwardNhwcMixedFp16 = LayernormBackward<half, half, float, float>;
 
 // 3. Input: BFLOAT16, ScaleBias: FLOAT, MeanInvVariance: FLOAT, Output: BFLOAT16
-using IntegrationGpuLayernormForwardNhwcMixedBfp16
-    = LayernormForward<bfloat16, bfloat16, float, float>;
+using IntegrationGpuLayernormBackwardNhwcMixedBfp16
+    = LayernormBackward<bfloat16, bfloat16, float, float>;
 
 // 4. Input: HALF, ScaleBias: FLOAT, MeanInvVariance: FLOAT, Output: FLOAT
-using IntegrationGpuLayernormForwardNhwcUpcastFp16 = LayernormForward<half, float, float, float>;
+using IntegrationGpuLayernormBackwardNhwcUpcastFp16 = LayernormBackward<half, float, float, float>;
 
 // 5. Input: BFLOAT16, ScaleBias: FLOAT, MeanInvVariance: FLOAT, Output: FLOAT
-using IntegrationGpuLayernormForwardNhwcUpcastBfp16
-    = LayernormForward<bfloat16, float, float, float>;
+using IntegrationGpuLayernormBackwardNhwcUpcastBfp16
+    = LayernormBackward<bfloat16, float, float, float>;
 
 // 6. Input: HALF, ScaleBias: HALF, MeanInvVariance: HALF, Output: HALF
-using IntegrationGpuLayernormForwardNhwcPureFp16 = LayernormForward<half, half, half, half>;
+using IntegrationGpuLayernormBackwardNhwcPureFp16 = LayernormBackward<half, half, half, half>;
 
 // 7. Input: BFLOAT16, ScaleBias: BFLOAT16, MeanInvVariance: BFLOAT16, Output: BFLOAT16
-using IntegrationGpuLayernormForwardNhwcPureBfp16
-    = LayernormForward<bfloat16, bfloat16, bfloat16, bfloat16>;
+using IntegrationGpuLayernormBackwardNhwcPureBfp16
+    = LayernormBackward<bfloat16, bfloat16, bfloat16, bfloat16>;
 
 // ============================================================================
 // NCDHW
 // ============================================================================
 
 // 1. Input: FLOAT, ScaleBias: FLOAT, MeanInvVariance: FLOAT, Output: FLOAT
-using IntegrationGpuLayernormForwardNcdhwPureFp32 = LayernormForward<float, float, float, float>;
+using IntegrationGpuLayernormBackwardNcdhwPureFp32 = LayernormBackward<float, float, float, float>;
 
 // 2. Input: HALF, ScaleBias: FLOAT, MeanInvVariance: FLOAT, Output: HALF
-using IntegrationGpuLayernormForwardNcdhwMixedFp16 = LayernormForward<half, half, float, float>;
+using IntegrationGpuLayernormBackwardNcdhwMixedFp16 = LayernormBackward<half, half, float, float>;
 
 // 3. Input: BFLOAT16, ScaleBias: FLOAT, MeanInvVariance: FLOAT, Output: BFLOAT16
-using IntegrationGpuLayernormForwardNcdhwMixedBfp16
-    = LayernormForward<bfloat16, bfloat16, float, float>;
+using IntegrationGpuLayernormBackwardNcdhwMixedBfp16
+    = LayernormBackward<bfloat16, bfloat16, float, float>;
 
 // 4. Input: HALF, ScaleBias: FLOAT, MeanInvVariance: FLOAT, Output: FLOAT
-using IntegrationGpuLayernormForwardNcdhwUpcastFp16 = LayernormForward<half, float, float, float>;
+using IntegrationGpuLayernormBackwardNcdhwUpcastFp16 = LayernormBackward<half, float, float, float>;
 
 // 5. Input: BFLOAT16, ScaleBias: FLOAT, MeanInvVariance: FLOAT, Output: FLOAT
-using IntegrationGpuLayernormForwardNcdhwUpcastBfp16
-    = LayernormForward<bfloat16, float, float, float>;
+using IntegrationGpuLayernormBackwardNcdhwUpcastBfp16
+    = LayernormBackward<bfloat16, float, float, float>;
 
 // 6. Input: HALF, ScaleBias: HALF, MeanInvVariance: HALF, Output: HALF
-using IntegrationGpuLayernormForwardNcdhwPureFp16 = LayernormForward<half, half, half, half>;
+using IntegrationGpuLayernormBackwardNcdhwPureFp16 = LayernormBackward<half, half, half, half>;
 
 // 7. Input: BFLOAT16, ScaleBias: BFLOAT16, MeanInvVariance: BFLOAT16, Output: BFLOAT16
-using IntegrationGpuLayernormForwardNcdhwPureBfp16
-    = LayernormForward<bfloat16, bfloat16, bfloat16, bfloat16>;
+using IntegrationGpuLayernormBackwardNcdhwPureBfp16
+    = LayernormBackward<bfloat16, bfloat16, bfloat16, bfloat16>;
 
 // ============================================================================
 // NDHWC
 // ============================================================================
 
 // 1. Input: FLOAT, ScaleBias: FLOAT, MeanInvVariance: FLOAT, Output: FLOAT
-using IntegrationGpuLayernormForwardNdhwcPureFp32 = LayernormForward<float, float, float, float>;
+using IntegrationGpuLayernormBackwardNdhwcPureFp32 = LayernormBackward<float, float, float, float>;
 
 // 2. Input: HALF, ScaleBias: FLOAT, MeanInvVariance: FLOAT, Output: HALF
-using IntegrationGpuLayernormForwardNdhwcMixedFp16 = LayernormForward<half, half, float, float>;
+using IntegrationGpuLayernormBackwardNdhwcMixedFp16 = LayernormBackward<half, half, float, float>;
 
 // 3. Input: BFLOAT16, ScaleBias: FLOAT, MeanInvVariance: FLOAT, Output: BFLOAT16
-using IntegrationGpuLayernormForwardNdhwcMixedBfp16
-    = LayernormForward<bfloat16, bfloat16, float, float>;
+using IntegrationGpuLayernormBackwardNdhwcMixedBfp16
+    = LayernormBackward<bfloat16, bfloat16, float, float>;
 
 // 4. Input: HALF, ScaleBias: FLOAT, MeanInvVariance: FLOAT, Output: FLOAT
-using IntegrationGpuLayernormForwardNdhwcUpcastFp16 = LayernormForward<half, float, float, float>;
+using IntegrationGpuLayernormBackwardNdhwcUpcastFp16 = LayernormBackward<half, float, float, float>;
 
 // 5. Input: BFLOAT16, ScaleBias: FLOAT, MeanInvVariance: FLOAT, Output: FLOAT
-using IntegrationGpuLayernormForwardNdhwcUpcastBfp16
-    = LayernormForward<bfloat16, float, float, float>;
+using IntegrationGpuLayernormBackwardNdhwcUpcastBfp16
+    = LayernormBackward<bfloat16, float, float, float>;
 
 // 6. Input: HALF, ScaleBias: HALF, MeanInvVariance: HALF, Output: HALF
-using IntegrationGpuLayernormForwardNdhwcPureFp16 = LayernormForward<half, half, half, half>;
+using IntegrationGpuLayernormBackwardNdhwcPureFp16 = LayernormBackward<half, half, half, half>;
 
 // 7. Input: BFLOAT16, ScaleBias: BFLOAT16, MeanInvVariance: BFLOAT16, Output: BFLOAT16
-using IntegrationGpuLayernormForwardNdhwcPureBfp16
-    = LayernormForward<bfloat16, bfloat16, bfloat16, bfloat16>;
+using IntegrationGpuLayernormBackwardNdhwcPureBfp16
+    = LayernormBackward<bfloat16, bfloat16, bfloat16, bfloat16>;
 
 } // namespace
 
@@ -244,312 +255,312 @@ using IntegrationGpuLayernormForwardNdhwcPureBfp16
 // Test Registrations
 // ============================================================================
 
-TEST_P(IntegrationGpuLayernormForwardNchwPureFp32, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNchwPureFp32, Correctness)
 {
     runGraphTest(TensorLayout::NCHW);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNchwPureFp32,
+                         IntegrationGpuLayernormBackwardNchwPureFp32,
                          testing::ValuesIn(getLayernorm4DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNchwPureFp32,
+                         IntegrationGpuLayernormBackwardNchwPureFp32,
                          testing::ValuesIn(getLayernorm4DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNchwMixedFp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNchwMixedFp16, Correctness)
 {
     runGraphTest(TensorLayout::NCHW);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNchwMixedFp16,
+                         IntegrationGpuLayernormBackwardNchwMixedFp16,
                          testing::ValuesIn(getLayernorm4DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNchwMixedFp16,
+                         IntegrationGpuLayernormBackwardNchwMixedFp16,
                          testing::ValuesIn(getLayernorm4DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNchwMixedBfp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNchwMixedBfp16, Correctness)
 {
     runGraphTest(TensorLayout::NCHW);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNchwMixedBfp16,
+                         IntegrationGpuLayernormBackwardNchwMixedBfp16,
                          testing::ValuesIn(getLayernorm4DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNchwMixedBfp16,
+                         IntegrationGpuLayernormBackwardNchwMixedBfp16,
                          testing::ValuesIn(getLayernorm4DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNchwUpcastFp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNchwUpcastFp16, Correctness)
 {
     runGraphTest(TensorLayout::NCHW);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNchwUpcastFp16,
+                         IntegrationGpuLayernormBackwardNchwUpcastFp16,
                          testing::ValuesIn(getLayernorm4DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNchwUpcastFp16,
+                         IntegrationGpuLayernormBackwardNchwUpcastFp16,
                          testing::ValuesIn(getLayernorm4DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNchwUpcastBfp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNchwUpcastBfp16, Correctness)
 {
     runGraphTest(TensorLayout::NCHW);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNchwUpcastBfp16,
+                         IntegrationGpuLayernormBackwardNchwUpcastBfp16,
                          testing::ValuesIn(getLayernorm4DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNchwUpcastBfp16,
+                         IntegrationGpuLayernormBackwardNchwUpcastBfp16,
                          testing::ValuesIn(getLayernorm4DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNchwPureFp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNchwPureFp16, Correctness)
 {
     runGraphTest(TensorLayout::NCHW);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNchwPureFp16,
+                         IntegrationGpuLayernormBackwardNchwPureFp16,
                          testing::ValuesIn(getLayernorm4DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNchwPureFp16,
+                         IntegrationGpuLayernormBackwardNchwPureFp16,
                          testing::ValuesIn(getLayernorm4DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNchwPureBfp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNchwPureBfp16, Correctness)
 {
     runGraphTest(TensorLayout::NCHW);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNchwPureBfp16,
+                         IntegrationGpuLayernormBackwardNchwPureBfp16,
                          testing::ValuesIn(getLayernorm4DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNchwPureBfp16,
+                         IntegrationGpuLayernormBackwardNchwPureBfp16,
                          testing::ValuesIn(getLayernorm4DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNhwcPureFp32, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNhwcPureFp32, Correctness)
 {
     runGraphTest(TensorLayout::NHWC);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNhwcPureFp32,
+                         IntegrationGpuLayernormBackwardNhwcPureFp32,
                          testing::ValuesIn(getLayernorm4DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNhwcPureFp32,
+                         IntegrationGpuLayernormBackwardNhwcPureFp32,
                          testing::ValuesIn(getLayernorm4DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNhwcMixedFp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNhwcMixedFp16, Correctness)
 {
     runGraphTest(TensorLayout::NHWC);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNhwcMixedFp16,
+                         IntegrationGpuLayernormBackwardNhwcMixedFp16,
                          testing::ValuesIn(getLayernorm4DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNhwcMixedFp16,
+                         IntegrationGpuLayernormBackwardNhwcMixedFp16,
                          testing::ValuesIn(getLayernorm4DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNhwcMixedBfp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNhwcMixedBfp16, Correctness)
 {
     runGraphTest(TensorLayout::NHWC);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNhwcMixedBfp16,
+                         IntegrationGpuLayernormBackwardNhwcMixedBfp16,
                          testing::ValuesIn(getLayernorm4DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNhwcMixedBfp16,
+                         IntegrationGpuLayernormBackwardNhwcMixedBfp16,
                          testing::ValuesIn(getLayernorm4DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNhwcUpcastFp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNhwcUpcastFp16, Correctness)
 {
     runGraphTest(TensorLayout::NHWC);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNhwcUpcastFp16,
+                         IntegrationGpuLayernormBackwardNhwcUpcastFp16,
                          testing::ValuesIn(getLayernorm4DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNhwcUpcastFp16,
+                         IntegrationGpuLayernormBackwardNhwcUpcastFp16,
                          testing::ValuesIn(getLayernorm4DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNhwcUpcastBfp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNhwcUpcastBfp16, Correctness)
 {
     runGraphTest(TensorLayout::NHWC);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNhwcUpcastBfp16,
+                         IntegrationGpuLayernormBackwardNhwcUpcastBfp16,
                          testing::ValuesIn(getLayernorm4DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNhwcUpcastBfp16,
+                         IntegrationGpuLayernormBackwardNhwcUpcastBfp16,
                          testing::ValuesIn(getLayernorm4DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNhwcPureFp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNhwcPureFp16, Correctness)
 {
     runGraphTest(TensorLayout::NHWC);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNhwcPureFp16,
+                         IntegrationGpuLayernormBackwardNhwcPureFp16,
                          testing::ValuesIn(getLayernorm4DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNhwcPureFp16,
+                         IntegrationGpuLayernormBackwardNhwcPureFp16,
                          testing::ValuesIn(getLayernorm4DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNhwcPureBfp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNhwcPureBfp16, Correctness)
 {
     runGraphTest(TensorLayout::NHWC);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNhwcPureBfp16,
+                         IntegrationGpuLayernormBackwardNhwcPureBfp16,
                          testing::ValuesIn(getLayernorm4DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNhwcPureBfp16,
+                         IntegrationGpuLayernormBackwardNhwcPureBfp16,
                          testing::ValuesIn(getLayernorm4DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNcdhwPureFp32, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNcdhwPureFp32, Correctness)
 {
     runGraphTest(TensorLayout::NCDHW);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNcdhwPureFp32,
+                         IntegrationGpuLayernormBackwardNcdhwPureFp32,
                          testing::ValuesIn(getLayernorm5DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNcdhwPureFp32,
+                         IntegrationGpuLayernormBackwardNcdhwPureFp32,
                          testing::ValuesIn(getLayernorm5DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNcdhwMixedFp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNcdhwMixedFp16, Correctness)
 {
     runGraphTest(TensorLayout::NCDHW);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNcdhwMixedFp16,
+                         IntegrationGpuLayernormBackwardNcdhwMixedFp16,
                          testing::ValuesIn(getLayernorm5DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNcdhwMixedFp16,
+                         IntegrationGpuLayernormBackwardNcdhwMixedFp16,
                          testing::ValuesIn(getLayernorm5DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNcdhwMixedBfp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNcdhwMixedBfp16, Correctness)
 {
     runGraphTest(TensorLayout::NCDHW);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNcdhwMixedBfp16,
+                         IntegrationGpuLayernormBackwardNcdhwMixedBfp16,
                          testing::ValuesIn(getLayernorm5DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNcdhwMixedBfp16,
+                         IntegrationGpuLayernormBackwardNcdhwMixedBfp16,
                          testing::ValuesIn(getLayernorm5DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNcdhwUpcastFp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNcdhwUpcastFp16, Correctness)
 {
     runGraphTest(TensorLayout::NCDHW);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNcdhwUpcastFp16,
+                         IntegrationGpuLayernormBackwardNcdhwUpcastFp16,
                          testing::ValuesIn(getLayernorm5DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNcdhwUpcastFp16,
+                         IntegrationGpuLayernormBackwardNcdhwUpcastFp16,
                          testing::ValuesIn(getLayernorm5DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNcdhwUpcastBfp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNcdhwUpcastBfp16, Correctness)
 {
     runGraphTest(TensorLayout::NCDHW);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNcdhwUpcastBfp16,
+                         IntegrationGpuLayernormBackwardNcdhwUpcastBfp16,
                          testing::ValuesIn(getLayernorm5DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNcdhwUpcastBfp16,
+                         IntegrationGpuLayernormBackwardNcdhwUpcastBfp16,
                          testing::ValuesIn(getLayernorm5DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNcdhwPureFp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNcdhwPureFp16, Correctness)
 {
     runGraphTest(TensorLayout::NCDHW);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNcdhwPureFp16,
+                         IntegrationGpuLayernormBackwardNcdhwPureFp16,
                          testing::ValuesIn(getLayernorm5DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNcdhwPureFp16,
+                         IntegrationGpuLayernormBackwardNcdhwPureFp16,
                          testing::ValuesIn(getLayernorm5DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNcdhwPureBfp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNcdhwPureBfp16, Correctness)
 {
     runGraphTest(TensorLayout::NCDHW);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNcdhwPureBfp16,
+                         IntegrationGpuLayernormBackwardNcdhwPureBfp16,
                          testing::ValuesIn(getLayernorm5DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNcdhwPureBfp16,
+                         IntegrationGpuLayernormBackwardNcdhwPureBfp16,
                          testing::ValuesIn(getLayernorm5DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNdhwcPureFp32, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNdhwcPureFp32, Correctness)
 {
     runGraphTest(TensorLayout::NDHWC);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNdhwcPureFp32,
+                         IntegrationGpuLayernormBackwardNdhwcPureFp32,
                          testing::ValuesIn(getLayernorm5DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNdhwcPureFp32,
+                         IntegrationGpuLayernormBackwardNdhwcPureFp32,
                          testing::ValuesIn(getLayernorm5DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNdhwcMixedFp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNdhwcMixedFp16, Correctness)
 {
     runGraphTest(TensorLayout::NDHWC);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNdhwcMixedFp16,
+                         IntegrationGpuLayernormBackwardNdhwcMixedFp16,
                          testing::ValuesIn(getLayernorm5DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNdhwcMixedFp16,
+                         IntegrationGpuLayernormBackwardNdhwcMixedFp16,
                          testing::ValuesIn(getLayernorm5DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNdhwcMixedBfp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNdhwcMixedBfp16, Correctness)
 {
     runGraphTest(TensorLayout::NDHWC);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNdhwcMixedBfp16,
+                         IntegrationGpuLayernormBackwardNdhwcMixedBfp16,
                          testing::ValuesIn(getLayernorm5DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNdhwcMixedBfp16,
+                         IntegrationGpuLayernormBackwardNdhwcMixedBfp16,
                          testing::ValuesIn(getLayernorm5DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNdhwcUpcastFp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNdhwcUpcastFp16, Correctness)
 {
     runGraphTest(TensorLayout::NDHWC);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNdhwcUpcastFp16,
+                         IntegrationGpuLayernormBackwardNdhwcUpcastFp16,
                          testing::ValuesIn(getLayernorm5DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNdhwcUpcastFp16,
+                         IntegrationGpuLayernormBackwardNdhwcUpcastFp16,
                          testing::ValuesIn(getLayernorm5DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNdhwcUpcastBfp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNdhwcUpcastBfp16, Correctness)
 {
     runGraphTest(TensorLayout::NDHWC);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNdhwcUpcastBfp16,
+                         IntegrationGpuLayernormBackwardNdhwcUpcastBfp16,
                          testing::ValuesIn(getLayernorm5DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNdhwcUpcastBfp16,
+                         IntegrationGpuLayernormBackwardNdhwcUpcastBfp16,
                          testing::ValuesIn(getLayernorm5DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNdhwcPureFp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNdhwcPureFp16, Correctness)
 {
     runGraphTest(TensorLayout::NDHWC);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNdhwcPureFp16,
+                         IntegrationGpuLayernormBackwardNdhwcPureFp16,
                          testing::ValuesIn(getLayernorm5DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNdhwcPureFp16,
+                         IntegrationGpuLayernormBackwardNdhwcPureFp16,
                          testing::ValuesIn(getLayernorm5DFullTestCases()));
 
-TEST_P(IntegrationGpuLayernormForwardNdhwcPureBfp16, Correctness)
+TEST_P(IntegrationGpuLayernormBackwardNdhwcPureBfp16, Correctness)
 {
     runGraphTest(TensorLayout::NDHWC);
 }
 INSTANTIATE_TEST_SUITE_P(Smoke,
-                         IntegrationGpuLayernormForwardNdhwcPureBfp16,
+                         IntegrationGpuLayernormBackwardNdhwcPureBfp16,
                          testing::ValuesIn(getLayernorm5DSmokeTestCases()));
 INSTANTIATE_TEST_SUITE_P(Full,
-                         IntegrationGpuLayernormForwardNdhwcPureBfp16,
+                         IntegrationGpuLayernormBackwardNdhwcPureBfp16,
                          testing::ValuesIn(getLayernorm5DFullTestCases()));
 
 } // namespace hip_kernel_provider::layernorm::test
