@@ -113,5 +113,8 @@ def getRequiredParametersMin() -> set:
         'WorkGroup',
         'DtlPlusLdsBuf',
         'MinGRIncPerMfma',
-        'UsePLRPack'
+        'UsePLRPack',
+        "AssertKRingShiftTailWrapOnly",
+        "AssertFree1DivByMT1LowbitGT1",
+        "BAddrInterleave"
     })
