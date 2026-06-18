@@ -15,6 +15,8 @@ Full documentation for MIOpen is available [here](https://rocm.docs.amd.com/proj
 * [Conv] Naive convolution solvers are now skipped by default during find when any non-naive solver succeeds across any algorithm. Set `MIOPEN_NAIVE_DISABLE_IF_ALT=0` to restore the previous behavior.
 * [Conv] Refreshed the gfx942 SystemDB with updated tuned entries from recent perf-eval runs.
 * [Conv] Refined the 2D AI heuristics (Tunanet solver selection and kernel-tuning-network candidate ranking) with feature-engineered inputs for gfx942 and gfx950, improving selection for grouped implicit-GEMM convolutions.
+* Added support for building kernels with debug symbols. Set `MIOPEN_DEBUG_SYMBOLS_KERNEL=1` to add debug symbols.
+* [BatchNorm] Implements Welford's algorithm for calculating variance in FwdTrainSpatial variant 1
 
 ### Resolved Issues
 * [RNN] Fix RNN workspace tensor descriptor int overflow
@@ -32,6 +34,8 @@ Full documentation for MIOpen is available [here](https://rocm.docs.amd.com/proj
 * Fixed the install RPATH for `MIOpenDriver` and Composable Kernel (CK) backend libraries.
 * Fixed a dangling lambda capture that could cause a segfault at `MIOPEN_LOG_LEVEL=6`.
 * [Windows] Enabled long-path support for `addkernels`.
+* [BatchNorm] Fixed MIOpen#3900 by implementing Welford's algorithm in FwdTrainSpatial variant 1
+
 
 ### Removed
 * Removed OpenCL solver `ConvOclDirectFwd1x1`.
