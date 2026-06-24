@@ -139,11 +139,6 @@ bool buildGfx1250Pipeline(PassManager& pm, StinkyAsmModule& module, const PassBu
         addGfx1250RegionPasses(innerPM, module, optLevel, moduleOptions.EnableWaitCntInsertion,
                                runScheduler);
         PB.applyExtensionPoint(PipelineExtensionPoint::InnerRegionEnd, innerPM, module);
-        if (moduleOptions.EnableWaitCntInsertion) {
-            WaitCntInsertionOptions waitCntOptions;
-            waitCntOptions.enableLoopCarriedTokenDeps = moduleOptions.EnableLoopCarriedTokenDeps;
-            innerPM.addPass(createStinkyWaitCntInsertionPass(waitCntOptions));
-        }
         pm.addPass(createKernelToRegionsPassAdaptor(module, {"loopWithPrefetch", "noLoadLoopBody"},
                                                     std::move(innerPM)));
     }
@@ -151,6 +146,20 @@ bool buildGfx1250Pipeline(PassManager& pm, StinkyAsmModule& module, const PassBu
     PB.applyExtensionPoint(PipelineExtensionPoint::AfterRegionPasses, pm, module);
 
     // -- kernel --
+
+    // full kernel waitcnt insertion
+    if (moduleOptions.EnableWaitCntInsertion) {
+        WaitCntInsertionOptions waitCntOptions;
+        waitCntOptions.enableLoopCarriedTokenDeps = moduleOptions.EnableLoopCarriedTokenDeps;
+
+        PassManager innerPM;
+        registerAllAnalyses(innerPM.getAnalysisManager());
+        innerPM.addPass(createCFGBuilderPass());
+        innerPM.addPass(createStinkyRemoveWaitCntPass());
+        innerPM.addPass(createStinkyBuildImplicitDependencyPass());
+        innerPM.addPass(createStinkyWaitCntInsertionPass(waitCntOptions));
+        pm.addPass(createKernelToRegionsPassAdaptor(module, {}, std::move(innerPM)));
+    }
 
     // Cluster-barrier insertion (kernel scope) — runs at every OptLevel when
     // the module opts in. Must precede InsertVgprMsbPass so the new
