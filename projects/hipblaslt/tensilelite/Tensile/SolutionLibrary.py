@@ -263,7 +263,7 @@ class MLPClassificationLibrary:
 
 class EmbeddingSimilarityLibrary:
     Tag = "EmbeddingSimilarity"
-    StateKeys = [("type", "tag"), "table", "encoder", "solution_embeddings", "hardware_constants", "quantize"]
+    StateKeys = [("type", "tag"), "table", "encoder", "solution_embeddings", "hardware_constants", "quantize", "fallback"]
 
     @classmethod
     def FromOriginalState(cls, d, solutions):
@@ -283,7 +283,8 @@ class EmbeddingSimilarityLibrary:
         solution_embeddings = d["solution_embeddings"]
         hardware_constants = d["hardware_constants"]
         quantize = d.get("quantize", False)
-        return cls(table, encoder, solution_embeddings, hardware_constants, quantize)
+        fallback = d.get("fallback", {})
+        return cls(table, encoder, solution_embeddings, hardware_constants, quantize, fallback)
 
     @property
     def tag(self):
@@ -297,12 +298,13 @@ class EmbeddingSimilarityLibrary:
     def remapSolutionIndices(self, indexMap):
         pass
 
-    def __init__(self, table, encoder, solution_embeddings, hardware_constants, quantize=False):
+    def __init__(self, table, encoder, solution_embeddings, hardware_constants, quantize=False, fallback={}):
         self.table = table
         self.encoder = encoder
         self.solution_embeddings = solution_embeddings
         self.hardware_constants = hardware_constants
         self.quantize = quantize
+        self.fallback = fallback
 
 
 class ProblemMapLibrary:

@@ -53,12 +53,15 @@ namespace TensileLite
         using Encoder            = EmbeddingSimilarity::Encoder;
         using SolutionEmbeddings = TensileLite::EmbeddingSimilarity::SolutionEmbeddings;
         using HardwareConstants  = EmbeddingSimilarity::HardwareConstants;
+        using FallbackRules      = EmbeddingSimilarity::FallbackRules;
+
 
         std::map<int, std::shared_ptr<MySolution>> solutionmap;
         std::vector<std::shared_ptr<MySolution>>   solutions;
         std::shared_ptr<Encoder>                   encoder;
         std::shared_ptr<SolutionEmbeddings>        embeddings;
         std::shared_ptr<HardwareConstants>         hw_constants;
+        std::shared_ptr<FallbackRules>             fallback_rules;
         bool                                       is_quantized_ = false;
 
         void quantize()
@@ -125,9 +128,33 @@ namespace TensileLite
                                                             Hardware const&  hardware,
                                                             int numSolutions) const override
         {
-
-            if(problem.batchSize(0) > 1)
+            bool debug = Debug::Instance().printPropertyEvaluation();
+            float batch_count = problem.batchSize(0);
+            
+            if(batch_count > 1) // TODO batch_count !=  1 not supported
                 return {};
+
+            float m = problem.freeSizeA(0);
+            float n = problem.freeSizeB(0);
+            float k = problem.boundSize(0);
+            int gemm_category = -1;
+
+            if (fallback_rules && fallback_rules->hasData())
+            {
+                gemm_category = classifyGEMM(m, n, k, batch_count); 
+
+                auto matching_pre = checkFallbackRules(m, n, k, gemm_category);
+                if (!matching_pre.empty())
+                {
+                    if (debug){
+                        std::cout << "GEMM=[" << m << ", " << n << ", " << k << ", " << gemm_category << "]\n";
+                        std::cout << "FALLBACK triggered by pre-model rules: ";
+                        for (int rid : matching_pre) std::cout << rid << " ";
+                        std::cout << "\n";
+                    }
+                    return {};
+                }
+            }
             
             std::vector<float> gemm_embedding = computeGEMMEmbeddings(problem);
 
@@ -184,6 +211,23 @@ namespace TensileLite
                                   });
             }
 
+            // Check post-model fallback rules with top score
+            if (gemm_category != -1 && !rankedSolutions.empty())
+            {
+                float top_score = rankedSolutions[0].first; 
+                auto matching_post = checkFallbackRules(m, n, k, gemm_category, top_score);
+                if (!matching_post.empty())
+                {
+                    if (debug){
+                       std::cout << "GEMM=[" << m << ", " << n << ", " << k << ", " << gemm_category <<", "<< top_score <<"]\n";
+                       std::cout << "FALLBACK triggered by post-model rules: ";
+                       for (int rid : matching_post) std::cout << rid << " ";
+                       std::cout << "\n";
+                    }
+                    return {}; 
+                }
+            }
+
             SolutionVector<MySolution> rv;
             rv.reserve(numToSort);
             std::transform(rankedSolutions.begin(),
@@ -210,6 +254,72 @@ namespace TensileLite
 
     protected:
         static constexpr float EPSILON = 1e-8f;
+
+        
+        std::vector<int> checkFallbackRules(float m, float n, float k, int cat,
+                                       float score = std::numeric_limits<float>::quiet_NaN()) const
+        {
+            std::vector<int> matching_rules;
+
+            bool use_pre_model = std::isnan(score);
+            const auto& rules = use_pre_model ? fallback_rules->pre_model_features : fallback_rules->post_model_features;
+
+            for (const auto& rule : rules)
+            {
+                if (rule.matches(m, n, k, cat, score, true, true)){
+                    matching_rules.push_back(rule.rule_id);
+                }
+            }
+            return matching_rules;
+        }
+
+    
+        int classifyGEMM(float m, float n, float k, float batch_count) const
+        {
+            // Categories checked in order (first match wins)
+            struct CategoryRule {
+                int cat;
+                float m_min, m_max;
+                float n_min, n_max;
+                float k_min, k_max;
+                float b_min, b_max;
+            };
+
+            const float INF = std::numeric_limits<float>::infinity();
+            const CategoryRule categories[] = {
+                {1, 2.0f, 1024.0f, 2.0f, 1024.0f, 2.0f, 1024.0f, 1.0f, 1.0f}, // 1. Small GEMMs
+                {3, 4094.0f, 8192.0f, 4096.0f, 8192.0f, 4096.0f, 8192.0f, 1.0f, 1.0f}, // 3. Large GEMMs (checked before 2. Medium)
+                {2, 2.0f, 8192.0f, 2.0f, 8192.0f, 2.0f, 8192.0f, 1.0f, 1.0f}, // 2. Medium GEMMs                
+                {5, 8193.0f, INF, 2.0f, 128.0f, 2.0f, 128.0f, 1.0f, 1.0f}, // 5. Large M, very small N and K
+                {4, 8193.0f, INF, 2.0f, 8192.0f, 2.0f, 8192.0f, 1.0f, 1.0f}, // 4. Large M, smaller N and K
+                {7, 2.0f, 128.0f, 8193.0f, INF, 2.0f, 128.0f, 1.0f, 1.0f}, // 7. Large N, very small M and K
+                {6, 2.0f, 8192.0f, 8193.0f, INF, 2.0f, 8192.0f, 1.0f, 1.0f}, // 6. Large N, smaller M and K
+                {9, 2.0f, 128.0f, 2.0f, 128.0f, 8193.0f, INF, 1.0f, 1.0f}, // 9. Large K, very small M and N
+                {8, 2.0f, 8192.0f, 2.0f, 8192.0f, 8193.0f, INF, 1.0f, 1.0f}, // 8. Large K, smaller M and N
+                {10, 8193.0f, INF, 8193.0f, INF, 2.0f, 8192.0f, 1.0f, 1.0f}, // 10. Large M and N
+                {11, 2.0f, 8192.0f, 8193.0f, INF, 8193.0f, INF, 1.0f, 1.0f}, // 11. Large N and K
+                {12, 8193.0f, INF, 2.0f, 8192.0f, 8193.0f, INF, 1.0f, 1.0f}, // 12. Large M and K
+                {13, 8193.0f, INF, 8193.0f, INF, 8193.0f, INF, 1.0f, 1.0f}, // 13. Very Large GEMMs
+                {14, 1.0f, 1.0f, 1.0f, INF, 1.0f, INF, 1.0f, 1.0f}, // 14. M = 1
+                {15, 1.0f, INF, 1.0f, 1.0f, 1.0f, INF, 1.0f, 1.0f}, // 15. N = 1                
+                {16, 1.0f, INF, 1.0f, INF, 1.0f, 1.0f, 1.0f, 1.0f}, // 16. K = 1
+                {17, 1.0f, INF, 1.0f, INF, 1.0f, INF, 2.0f, 128.0f}, // 17. Small batch
+                {18, 1.0f, INF, 1.0f, INF, 1.0f, INF, 129.0f, 1024.0f}, // 18. Medium batch
+                {19, 1.0f, INF, 1.0f, INF, 1.0f, INF, 1025.0f, 8192.0f}, // 19. Large batch
+                {20, 1.0f, INF, 1.0f, INF, 1.0f, INF, 8193.0f, INF} // 20. Very large batch
+            };
+            for (const auto& rule : categories)
+            {
+                if (m >= rule.m_min && m <= rule.m_max &&
+                    n >= rule.n_min && n <= rule.n_max &&
+                    k >= rule.k_min && k <= rule.k_max &&
+                    batch_count >= rule.b_min && batch_count <= rule.b_max)
+                {
+                    return rule.cat;
+                }
+            }
+            return -1;  
+        }
 
         /* Helper functions */
         inline float bucket_dimension(float x) const
@@ -281,7 +391,6 @@ namespace TensileLite
         /* Main feature computation function */
         std::vector<float> computeGEMMEmbeddings(const MyProblem& problem) const
         {
-
             // Extract basic problem dimensions
             float m = problem.freeSizeA(0);
             float n = problem.freeSizeB(0);

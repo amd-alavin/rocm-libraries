@@ -32,6 +32,7 @@
 #include <cstddef>
 #include <unordered_set>
 
+
 namespace TensileLite
 {
     namespace Serialization
@@ -122,6 +123,58 @@ namespace TensileLite
                 iot::mapRequired(io, "acc_size", hw.acc_size);
             }
 
+            const static bool flow = false;
+        };
+
+
+        template <typename IO>
+        struct MappingTraits<EmbeddingSimilarity::FallbackRule, IO>
+        {
+            using FallbackRule = EmbeddingSimilarity::FallbackRule;
+            using iot  = IOTraits<IO>;
+
+            static void mapping(IO& io, FallbackRule& rule)
+            {
+                iot::mapRequired(io, "rule_id", rule.rule_id);
+                iot::mapRequired(io, "m", rule.m_ranges);
+                iot::mapRequired(io, "n", rule.n_ranges);
+                iot::mapRequired(io, "k", rule.k_ranges);
+                iot::mapOptional(io, "score", rule.score_ranges);
+                iot::mapRequired(io, "cats", rule.cats);
+            }
+
+            const static bool flow = false;
+        };
+
+       
+        template <typename IO>
+        struct MappingTraits<EmbeddingSimilarity::FallbackRules, IO>
+        {
+            using FallbackRules = EmbeddingSimilarity::FallbackRules;
+            using iot           = IOTraits<IO>;
+
+            static void mapping(IO& io, FallbackRules& fallback)
+            {            
+                iot::mapRequired(io, "interval_semantics", fallback.interval_semantics);
+                iot::mapOptional(io, "notes", fallback.notes);
+                iot::mapRequired(io, "all_cats", fallback.all_cats);
+               
+                iot::mapOptional(io, "pre_model_features", fallback.pre_model_features);
+                iot::mapOptional(io, "post_model_features", fallback.post_model_features);
+            
+   
+                for (size_t i = 0; i < fallback.pre_model_features.size(); ++i)
+                {
+                    const auto& rule = fallback.pre_model_features[i];
+                }
+
+                for (size_t i = 0; i < fallback.post_model_features.size(); ++i)
+                {
+                    const auto& rule = fallback.post_model_features[i];
+                }
+
+            }
+            
             const static bool flow = false;
         };
 
@@ -216,6 +269,29 @@ namespace TensileLite
                 }
                 iot::mapRequired(io, "hardware_constants", *hw_constants);
 
+                // Fallback rules (optional)
+                std::shared_ptr<EmbeddingSimilarity::FallbackRules> fallback_rules;
+                if(iot::outputting(io))
+                {
+                    fallback_rules = lib.fallback_rules;
+                }
+                else
+                {
+                    fallback_rules = std::make_shared<EmbeddingSimilarity::FallbackRules>();
+                    lib.fallback_rules = fallback_rules;
+                }
+                iot::mapOptional(io, "fallback", *fallback_rules);
+                
+                // Validation : Only assign if data was actually loaded
+                if (fallback_rules->hasData())
+                {
+                    if (!fallback_rules->valid())
+                    {
+                        throw std::runtime_error(
+                            "ERROR: EmbeddingSimilarity fallback_rules are invalid.");
+                    }
+                }
+
                 bool quantize = false;
                 iot::mapOptional(io, "quantize", quantize);
                 
@@ -224,11 +300,10 @@ namespace TensileLite
                     lib.quantize();
                 }
 
-                // Validación
+                // Validation
                 if(!hw_constants->valid())
                     throw std::runtime_error(
                         "ERROR: EmbeddingSimilarity hardware constants are invalid.");
-
 
                 // Checks
                 if(embeddings->size() != lib.solutions.size())

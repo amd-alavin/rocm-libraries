@@ -194,5 +194,134 @@ namespace TensileLite
             float acc_size   = 4.0f;
         };
 
+        struct FallbackRule
+        {
+            FallbackRule() = default;
+            std::string description() const
+            {
+                return "FallbackRule";
+            }
+
+            bool valid(bool verbose = false) const
+            {
+                bool rv = true; // TODO
+                return rv;
+            }
+            
+            bool matches(float m, float n, float k, int cat,
+                   float score = std::numeric_limits<float>::quiet_NaN(),
+                   bool is_open_open = true,
+                   bool verbose = false) const
+            {
+                // Check category first (quick rejection)
+                if (!matchesCategory(cat))
+                {
+                    if (verbose) std::cerr << "[FALLBACK]  REJECTED: Category mismatch\n";
+                    return false;
+                }
+
+                // Check M, N, K ranges
+                if (!inRange(m, m_ranges, is_open_open) ||
+                    !inRange(n, n_ranges, is_open_open) ||
+                    !inRange(k, k_ranges, is_open_open))
+                {
+                    return false;
+                }
+
+                // Check score range if provided
+                if (!std::isnan(score) && !inRange(score, score_ranges, is_open_open))
+                {
+                    return false;
+                }
+
+                return true;
+            }
+
+
+            int rule_id;
+            std::vector<float> m_ranges;    
+            std::vector<float> n_ranges;
+            std::vector<float> k_ranges;
+            std::vector<float> score_ranges;  // Optional
+            std::vector<int> cats;   
+
+            private:
+
+                bool matchesCategory(int cat) const
+                {
+                    if (cats.empty()) return true;  // Empty = match all
+
+                    for (int rule_cat : cats)
+                    {
+                        if (rule_cat == cat) return true;
+                    }
+                    return false;
+                }
+
+                static bool inRange(float value, const std::vector<float>& ranges, bool is_open_open)
+                {
+                    if (ranges.empty()) return true;  // No constraint
+
+                    // Ranges in pairs: [min1, max1, min2, max2, ...]
+                    for (size_t i = 0; i + 1 < ranges.size(); i += 2)
+                    {
+                        float range_min = ranges[i];
+                        float range_max = ranges[i + 1];
+
+                        if (is_open_open)
+                        {
+                            if (value > range_min && value < range_max)
+                                return true;
+                        }
+                        else
+                        {
+                            if (value >= range_min && value <= range_max)
+                                return true;
+                        }
+                    }
+                    return false;
+                }
+
+        };
+
+        struct FallbackRules
+        {
+            FallbackRules() = default;
+
+            std::string description() const
+            {
+                return "FallbackRules";
+            }
+
+            bool valid(bool verbose = false) const
+            {
+                bool rv = true;
+                std::cout << "Validating....\n";
+                if(all_cats.empty())
+                {
+                    if(verbose) std::cout << "FallbackRules: all_cats is empty" << std::endl;
+                    rv = false;
+                }
+                return rv;
+            }
+            bool isEmpty() const
+            {
+                return all_cats.empty() &&
+                        pre_model_features.empty() &&
+                        post_model_features.empty();
+            }
+
+            bool hasData() const
+            {
+                return !isEmpty();
+            }
+
+            std::string interval_semantics = "open_open"; // TODO
+            std::string notes;
+            std::vector<int> all_cats;                     
+            std::vector<FallbackRule> pre_model_features;   // [m,n,k,cat]
+            std::vector<FallbackRule> post_model_features;  // [m,n,k,cat,score]
+        };
+
     } // namespace EmbeddingSimilarity
 } // namespace TensileLite
