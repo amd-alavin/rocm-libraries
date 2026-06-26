@@ -266,7 +266,7 @@ namespace TensileLite
 
             for (const auto& rule : rules)
             {
-                if (rule.matches(m, n, k, cat, score, true, true)){
+                if (rule.matches(m, n, k, cat, score, true, false)){
                     matching_rules.push_back(rule.rule_id);
                 }
             }
