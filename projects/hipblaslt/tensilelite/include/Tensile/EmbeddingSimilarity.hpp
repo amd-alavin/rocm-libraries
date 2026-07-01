@@ -208,34 +208,50 @@ namespace TensileLite
                 return rv;
             }
             
-            bool matches(float m, float n, float k, int cat,
-                   float score = std::numeric_limits<float>::quiet_NaN(),
-                   bool is_open_open = true,
-                   bool verbose = false) const
+            bool matches(float m, float n, float k, int cat, float score) const
             {
                 // Check category first (quick rejection)
                 if (!matchesCategory(cat))
                 {
-                    if (verbose) std::cerr << "[FALLBACK]  REJECTED: Category mismatch\n";
                     return false;
                 }
 
                 // Check M, N, K ranges
-                if (!inRange(m, m_ranges, is_open_open) ||
-                    !inRange(n, n_ranges, is_open_open) ||
-                    !inRange(k, k_ranges, is_open_open))
+                if (!inRange(m, m_ranges) ||
+                    !inRange(n, n_ranges) ||
+                    !inRange(k, k_ranges))
                 {
                     return false;
                 }
 
-                // Check score range if provided
-                if (!std::isnan(score) && !inRange(score, score_ranges, is_open_open))
+                // Check score range
+                if (!inRange(score, score_ranges))
                 {
                     return false;
                 }
 
                 return true;
             }
+
+            bool matches(float m, float n, float k, int cat) const
+            {
+                // Check category first (quick rejection)
+                if (!matchesCategory(cat))
+                {
+                    return false;
+                }
+
+                // Check M, N, K ranges
+                if (!inRange(m, m_ranges) ||
+                    !inRange(n, n_ranges) ||
+                    !inRange(k, k_ranges))
+                {
+                    return false;
+                }
+
+                return true;
+            }
+
 
 
             int rule_id;
@@ -258,7 +274,7 @@ namespace TensileLite
                     return false;
                 }
 
-                static bool inRange(float value, const std::vector<float>& ranges, bool is_open_open)
+                static bool inRange(float value, const std::vector<float>& ranges)
                 {
                     if (ranges.empty()) return true;  // No constraint
 
@@ -268,16 +284,10 @@ namespace TensileLite
                         float range_min = ranges[i];
                         float range_max = ranges[i + 1];
 
-                        if (is_open_open)
-                        {
-                            if (value > range_min && value < range_max)
-                                return true;
+                        if (value > range_min && value < range_max){
+                            return true;
                         }
-                        else
-                        {
-                            if (value >= range_min && value <= range_max)
-                                return true;
-                        }
+                       
                     }
                     return false;
                 }

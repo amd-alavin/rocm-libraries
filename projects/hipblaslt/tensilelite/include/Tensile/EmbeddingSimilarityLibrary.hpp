@@ -142,16 +142,8 @@ namespace TensileLite
             if (fallback_rules && fallback_rules->hasData())
             {
                 gemm_category = classifyGEMM(m, n, k, batch_count); 
-
-                auto matching_pre = checkFallbackRules(m, n, k, gemm_category);
-                if (!matching_pre.empty())
+                if (checkFallbackRules(m, n, k, gemm_category, debug))
                 {
-                    if (debug){
-                        std::cout << "GEMM=[" << m << ", " << n << ", " << k << ", " << gemm_category << "]\n";
-                        std::cout << "FALLBACK triggered by pre-model rules: ";
-                        for (int rid : matching_pre) std::cout << rid << " ";
-                        std::cout << "\n";
-                    }
                     return {};
                 }
             }
@@ -215,15 +207,8 @@ namespace TensileLite
             if (gemm_category != -1 && !rankedSolutions.empty())
             {
                 float top_score = rankedSolutions[0].first; 
-                auto matching_post = checkFallbackRules(m, n, k, gemm_category, top_score);
-                if (!matching_post.empty())
+                if (checkFallbackRules(m, n, k, gemm_category, top_score, debug))
                 {
-                    if (debug){
-                       std::cout << "GEMM=[" << m << ", " << n << ", " << k << ", " << gemm_category <<", "<< top_score <<"]\n";
-                       std::cout << "FALLBACK triggered by post-model rules: ";
-                       for (int rid : matching_post) std::cout << rid << " ";
-                       std::cout << "\n";
-                    }
                     return {}; 
                 }
             }
@@ -255,23 +240,36 @@ namespace TensileLite
     protected:
         static constexpr float EPSILON = 1e-8f;
 
-        
-        std::vector<int> checkFallbackRules(float m, float n, float k, int cat,
-                                       float score = std::numeric_limits<float>::quiet_NaN()) const
+        bool checkFallbackRules(float m, float n, float k, int cat, bool debug) const
         {
-            std::vector<int> matching_rules;
-
-            bool use_pre_model = std::isnan(score);
-            const auto& rules = use_pre_model ? fallback_rules->pre_model_features : fallback_rules->post_model_features;
-
-            for (const auto& rule : rules)
+            for (const auto& rule :  fallback_rules->pre_model_features)
             {
-                if (rule.matches(m, n, k, cat, score, true, false)){
-                    matching_rules.push_back(rule.rule_id);
+                if (rule.matches(m, n, k, cat)){
+                    if (debug){
+                        std::cout << "GEMM=[" << m << ", " << n << ", " << k << ", " << cat <<"]\n";
+                        std::cout << "FALLBACK triggered by pre-model rules: "<< rule.rule_id << "\n";
+                    }
+                   return true;
                 }
             }
-            return matching_rules;
+            return false;
         }
+
+        bool checkFallbackRules(float m, float n, float k, int cat, float score, bool debug) const
+        {
+            for (const auto& rule :  fallback_rules->post_model_features)
+            {
+                if (rule.matches(m, n, k, cat, score)){
+                    if (debug){
+                        std::cout << "GEMM=[" << m << ", " << n << ", " << k << ", " << cat <<", "<< score <<"]\n";
+                        std::cout << "FALLBACK triggered by post-model rules: "<< rule.rule_id << "\n";
+                    }
+                   return true;
+                }
+            }
+            return false;
+        }
+
 
     
         int classifyGEMM(float m, float n, float k, float batch_count) const
