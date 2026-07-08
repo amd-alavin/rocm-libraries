@@ -142,7 +142,7 @@ namespace TensileLite
             if (fallback_rules && fallback_rules->hasData())
             {
                 gemm_category = classifyGEMM(m, n, k, batch_count); 
-                if (checkFallbackRules(m, n, k, gemm_category, debug))
+                if (fallback_rules->matchesPreModel(m, n, k, gemm_category, debug))
                 {
                     return {};
                 }
@@ -207,7 +207,7 @@ namespace TensileLite
             if (gemm_category != -1 && !rankedSolutions.empty())
             {
                 float top_score = rankedSolutions[0].first; 
-                if (checkFallbackRules(m, n, k, gemm_category, top_score, debug))
+                if (fallback_rules->matchesPostModel(m, n, k, gemm_category, top_score, debug))
                 {
                     return {}; 
                 }
@@ -240,38 +240,6 @@ namespace TensileLite
     protected:
         static constexpr float EPSILON = 1e-8f;
 
-        bool checkFallbackRules(float m, float n, float k, int cat, bool debug) const
-        {
-            for (const auto& rule :  fallback_rules->pre_model_features)
-            {
-                if (rule.matches(m, n, k, cat)){
-                    if (debug){
-                        std::cout << "GEMM=[" << m << ", " << n << ", " << k << ", " << cat <<"]\n";
-                        std::cout << "FALLBACK triggered by pre-model rules: "<< rule.rule_id << "\n";
-                    }
-                   return true;
-                }
-            }
-            return false;
-        }
-
-        bool checkFallbackRules(float m, float n, float k, int cat, float score, bool debug) const
-        {
-            for (const auto& rule :  fallback_rules->post_model_features)
-            {
-                if (rule.matches(m, n, k, cat, score)){
-                    if (debug){
-                        std::cout << "GEMM=[" << m << ", " << n << ", " << k << ", " << cat <<", "<< score <<"]\n";
-                        std::cout << "FALLBACK triggered by post-model rules: "<< rule.rule_id << "\n";
-                    }
-                   return true;
-                }
-            }
-            return false;
-        }
-
-
-    
         int classifyGEMM(float m, float n, float k, float batch_count) const
         {
             // Categories checked in order (first match wins)

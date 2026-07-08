@@ -26,7 +26,12 @@
 
 #pragma once
 
+#include <cstring>
+#include <tuple>
+#include <utility>
+
 #include "DataTypes_Half.hpp"
+#include "Fallback.hpp"
 #include <array>
 #include <map>
 #include <memory>
@@ -194,9 +199,56 @@ namespace TensileLite
             float acc_size   = 4.0f;
         };
 
-        struct FallbackRule
+        template <int KeyId>
+        struct FallbackFloatTag
         {
-            FallbackRule() = default;
+            using Type = float;
+            static constexpr int Id = KeyId;
+        };
+
+        template <int KeyId>
+        struct FallbackIntTag
+        {
+            using Type = int;
+            static constexpr int Id = KeyId;
+        };
+
+        using FallbackMTag        = FallbackFloatTag<0>;
+        using FallbackNTag        = FallbackFloatTag<1>;
+        using FallbackKTag        = FallbackFloatTag<2>;
+        using FallbackScoreTag    = FallbackFloatTag<3>;
+        using FallbackCategoryTag = FallbackIntTag<0>;
+
+        struct FallbackBaseRule
+        {
+            using CategoryRule = TensileLite::Fallback::Category<FallbackCategoryTag, int>;
+            using MRule        = TensileLite::Fallback::Range<FallbackMTag, float>;
+            using NRule        = TensileLite::Fallback::Range<FallbackNTag, float>;
+            using KRule        = TensileLite::Fallback::Range<FallbackKTag, float>;
+            using PreRuleSet   = TensileLite::Fallback::RuleSet<CategoryRule, MRule, NRule, KRule>;
+
+            FallbackBaseRule()
+                : FallbackBaseRule(0, {}, {}, {}, {})
+            {
+            }
+
+            FallbackBaseRule(int                ruleId,
+                             std::vector<float> mRanges,
+                             std::vector<float> nRanges,
+                             std::vector<float> kRanges,
+                             std::vector<int>   categories)
+                : rule_id_(ruleId)
+                , m_ranges_(std::move(mRanges))
+                , n_ranges_(std::move(nRanges))
+                , k_ranges_(std::move(kRanges))
+                , cats_(std::move(categories))
+                , pre_rule_set_(CategoryRule(cats_),
+                                MRule(MRule::fromPairs(m_ranges_)),
+                                NRule(NRule::fromPairs(n_ranges_)),
+                                KRule(KRule::fromPairs(k_ranges_)))
+            {
+            }
+
             std::string description() const
             {
                 return "FallbackRule";
@@ -204,94 +256,145 @@ namespace TensileLite
 
             bool valid(bool verbose = false) const
             {
-                bool rv = true; // TODO
+                bool rv = true;
+                rv       = MRule::validPairs(m_ranges_, verbose) && rv;
+                rv       = NRule::validPairs(n_ranges_, verbose) && rv;
+                rv       = KRule::validPairs(k_ranges_, verbose) && rv;
+                rv       = CategoryRule(cats_).valid(verbose) && rv;
+                rv       = MRule(MRule::fromPairs(m_ranges_)).valid(verbose) && rv;
+                rv       = NRule(NRule::fromPairs(n_ranges_)).valid(verbose) && rv;
+                rv       = KRule(KRule::fromPairs(k_ranges_)).valid(verbose) && rv;
                 return rv;
             }
-            
-            bool matches(float m, float n, float k, int cat, float score) const
+
+            int ruleId() const
             {
-                // Check category first (quick rejection)
-                if (!matchesCategory(cat))
-                {
-                    return false;
-                }
+                return rule_id_;
+            }
 
-                // Check M, N, K ranges
-                if (!inRange(m, m_ranges) ||
-                    !inRange(n, n_ranges) ||
-                    !inRange(k, k_ranges))
-                {
-                    return false;
-                }
+            const std::vector<float>& mRanges() const
+            {
+                return m_ranges_;
+            }
 
-                // Check score range
-                if (!inRange(score, score_ranges))
-                {
-                    return false;
-                }
+            const std::vector<float>& nRanges() const
+            {
+                return n_ranges_;
+            }
 
-                return true;
+            const std::vector<float>& kRanges() const
+            {
+                return k_ranges_;
+            }
+
+            const std::vector<int>& categories() const
+            {
+                return cats_;
+            }
+
+        protected:
+            int                rule_id_ = 0;
+            std::vector<float> m_ranges_;
+            std::vector<float> n_ranges_;
+            std::vector<float> k_ranges_;
+            std::vector<int>   cats_;
+
+            PreRuleSet pre_rule_set_;
+        };
+
+        struct FallbackRule : FallbackBaseRule
+        {
+            using FallbackBaseRule::FallbackBaseRule;
+
+            FallbackRule() = default;
+
+            FallbackRule(int                ruleId,
+                         std::vector<float> mRanges,
+                         std::vector<float> nRanges,
+                         std::vector<float> kRanges,
+                         std::vector<int>   categories)
+                : FallbackBaseRule(ruleId,
+                                   std::move(mRanges),
+                                   std::move(nRanges),
+                                   std::move(kRanges),
+                                   std::move(categories))
+            {
             }
 
             bool matches(float m, float n, float k, int cat) const
             {
-                // Check category first (quick rejection)
-                if (!matchesCategory(cat))
-                {
-                    return false;
-                }
+                const auto context = TensileLite::Fallback::Context(
+                    TensileLite::Fallback::bind<FallbackMTag>(m),
+                    TensileLite::Fallback::bind<FallbackNTag>(n),
+                    TensileLite::Fallback::bind<FallbackKTag>(k),
+                    TensileLite::Fallback::bind<FallbackCategoryTag>(cat));
 
-                // Check M, N, K ranges
-                if (!inRange(m, m_ranges) ||
-                    !inRange(n, n_ranges) ||
-                    !inRange(k, k_ranges))
-                {
-                    return false;
-                }
+                return pre_rule_set_.matches(context);
+            }
+        };
 
-                return true;
+        struct FallbackPostRule : FallbackBaseRule
+        {
+            using ScoreRule   = TensileLite::Fallback::Range<FallbackScoreTag, float>;
+            using PostRuleSet = TensileLite::Fallback::RuleSet<CategoryRule,
+                                                               MRule,
+                                                               NRule,
+                                                               KRule,
+                                                               ScoreRule>;
+
+            FallbackPostRule()
+                : FallbackPostRule(0, {}, {}, {}, {}, {})
+            {
             }
 
+            FallbackPostRule(int                ruleId,
+                             std::vector<float> mRanges,
+                             std::vector<float> nRanges,
+                             std::vector<float> kRanges,
+                             std::vector<float> scoreRanges,
+                             std::vector<int>   categories)
+                : FallbackBaseRule(ruleId,
+                                   std::move(mRanges),
+                                   std::move(nRanges),
+                                   std::move(kRanges),
+                                   std::move(categories))
+                , score_ranges_(std::move(scoreRanges))
+                , post_rule_set_(CategoryRule(cats_),
+                                 MRule(MRule::fromPairs(m_ranges_)),
+                                 NRule(NRule::fromPairs(n_ranges_)),
+                                 KRule(KRule::fromPairs(k_ranges_)),
+                                 ScoreRule(ScoreRule::fromPairs(score_ranges_)))
+            {
+            }
 
+            bool valid(bool verbose = false) const
+            {
+                bool rv = FallbackBaseRule::valid(verbose);
+                rv      = ScoreRule::validPairs(score_ranges_, verbose) && rv;
+                rv      = ScoreRule(ScoreRule::fromPairs(score_ranges_)).valid(verbose) && rv;
+                return rv;
+            }
 
-            int rule_id;
-            std::vector<float> m_ranges;    
-            std::vector<float> n_ranges;
-            std::vector<float> k_ranges;
-            std::vector<float> score_ranges;  // Optional
-            std::vector<int> cats;   
+            const std::vector<float>& scoreRanges() const
+            {
+                return score_ranges_;
+            }
 
-            private:
+            bool matches(float m, float n, float k, int cat, float score) const
+            {
+                const auto context = TensileLite::Fallback::Context(
+                    TensileLite::Fallback::bind<FallbackMTag>(m),
+                    TensileLite::Fallback::bind<FallbackNTag>(n),
+                    TensileLite::Fallback::bind<FallbackKTag>(k),
+                    TensileLite::Fallback::bind<FallbackCategoryTag>(cat),
+                    TensileLite::Fallback::bind<FallbackScoreTag>(score));
 
-                bool matchesCategory(int cat) const
-                {
-                    if (cats.empty()) return true;  // Empty = match all
+                return post_rule_set_.matches(context);
+            }
 
-                    for (int rule_cat : cats)
-                    {
-                        if (rule_cat == cat) return true;
-                    }
-                    return false;
-                }
-
-                static bool inRange(float value, const std::vector<float>& ranges)
-                {
-                    if (ranges.empty()) return true;  // No constraint
-
-                    // Ranges in pairs: [min1, max1, min2, max2, ...]
-                    for (size_t i = 0; i + 1 < ranges.size(); i += 2)
-                    {
-                        float range_min = ranges[i];
-                        float range_max = ranges[i + 1];
-
-                        if (value > range_min && value < range_max){
-                            return true;
-                        }
-                       
-                    }
-                    return false;
-                }
-
+        private:
+            std::vector<float> score_ranges_;
+            PostRuleSet        post_rule_set_;
         };
 
         struct FallbackRules
@@ -306,14 +409,25 @@ namespace TensileLite
             bool valid(bool verbose = false) const
             {
                 bool rv = true;
-                std::cout << "Validating....\n";
                 if(all_cats.empty())
                 {
                     if(verbose) std::cout << "FallbackRules: all_cats is empty" << std::endl;
                     rv = false;
                 }
+
+                for(const auto& rule : pre_model_features)
+                {
+                    rv = rule.valid(verbose) && rv;
+                }
+
+                for(const auto& rule : post_model_features)
+                {
+                    rv = rule.valid(verbose) && rv;
+                }
+
                 return rv;
             }
+
             bool isEmpty() const
             {
                 return all_cats.empty() &&
@@ -326,11 +440,71 @@ namespace TensileLite
                 return !isEmpty();
             }
 
+            bool matchesPreModel(float m, float n, float k, int cat, bool debug = false) const
+            {
+                return matches(pre_model_features, m, n, k, cat, debug);
+            }
+
+            bool matchesPostModel(float m, float n, float k, int cat, float score, bool debug = false) const
+            {
+                return matches(post_model_features, m, n, k, cat, score, debug);
+            }
+
             std::string interval_semantics = "open_open"; // TODO
             std::string notes;
             std::vector<int> all_cats;                     
-            std::vector<FallbackRule> pre_model_features;   // [m,n,k,cat]
-            std::vector<FallbackRule> post_model_features;  // [m,n,k,cat,score]
+            std::vector<FallbackRule> pre_model_features;     // [m,n,k,cat]
+            std::vector<FallbackPostRule> post_model_features; // [m,n,k,cat,score]
+
+        private:
+            static bool matches(const std::vector<FallbackRule>& rules,
+                                float                            m,
+                                float                            n,
+                                float                            k,
+                                int                              cat,
+                                bool                             debug)
+            {
+                for(const auto& rule : rules)
+                {
+                    if(rule.matches(m, n, k, cat))
+                    {
+                        if(debug)
+                        {
+                            std::cout << "FALLBACK triggered by pre-model rule_id=" << rule.ruleId()
+                                      << "\n";
+                            std::cout << "RULE_INPUT: M=" << m << ", N=" << n << ", K=" << k
+                                      << ", CAT=" << cat << "\n";
+                        }
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            static bool matches(const std::vector<FallbackPostRule>& rules,
+                                float                            m,
+                                float                            n,
+                                float                            k,
+                                int                              cat,
+                                float                            score,
+                                bool                             debug)
+            {
+                for(const auto& rule : rules)
+                {
+                    if(rule.matches(m, n, k, cat, score))
+                    {
+                        if(debug)
+                        {
+                            std::cout << "FALLBACK triggered by post-model rule_id=" << rule.ruleId()
+                                      << "\n";
+                            std::cout << "RULE_INPUT: M=" << m << ", N=" << n << ", K=" << k
+                                      << ", CAT=" << cat << ", SCORE=" << score << "\n";
+                        }
+                        return true;
+                    }
+                }
+                return false;
+            }
         };
 
     } // namespace EmbeddingSimilarity

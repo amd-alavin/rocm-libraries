@@ -130,17 +130,97 @@ namespace TensileLite
         template <typename IO>
         struct MappingTraits<EmbeddingSimilarity::FallbackRule, IO>
         {
-            using FallbackRule = EmbeddingSimilarity::FallbackRule;
+            using PreRule = EmbeddingSimilarity::FallbackRule;
             using iot  = IOTraits<IO>;
 
-            static void mapping(IO& io, FallbackRule& rule)
+            static void mapping(IO& io, PreRule& rule)
             {
-                iot::mapRequired(io, "rule_id", rule.rule_id);
-                iot::mapRequired(io, "m", rule.m_ranges);
-                iot::mapRequired(io, "n", rule.n_ranges);
-                iot::mapRequired(io, "k", rule.k_ranges);
-                iot::mapOptional(io, "score", rule.score_ranges);
-                iot::mapRequired(io, "cats", rule.cats);
+                if(iot::outputting(io))
+                {
+                    int                ruleId      = rule.ruleId();
+                    std::vector<float> mRanges     = rule.mRanges();
+                    std::vector<float> nRanges     = rule.nRanges();
+                    std::vector<float> kRanges     = rule.kRanges();
+                    std::vector<int>   categories  = rule.categories();
+
+                    iot::mapRequired(io, "rule_id", ruleId);
+                    iot::mapRequired(io, "m", mRanges);
+                    iot::mapRequired(io, "n", nRanges);
+                    iot::mapRequired(io, "k", kRanges);
+                    iot::mapRequired(io, "cats", categories);
+                }
+                else
+                {
+                    int                ruleId = 0;
+                    std::vector<float> mRanges;
+                    std::vector<float> nRanges;
+                    std::vector<float> kRanges;
+                    std::vector<int>   categories;
+
+                    iot::mapRequired(io, "rule_id", ruleId);
+                    iot::mapRequired(io, "m", mRanges);
+                    iot::mapRequired(io, "n", nRanges);
+                    iot::mapRequired(io, "k", kRanges);
+                    iot::mapRequired(io, "cats", categories);
+
+                    rule = PreRule(ruleId,
+                                   std::move(mRanges),
+                                   std::move(nRanges),
+                                   std::move(kRanges),
+                                   std::move(categories));
+                }
+            }
+
+            const static bool flow = false;
+        };
+
+        template <typename IO>
+        struct MappingTraits<EmbeddingSimilarity::FallbackPostRule, IO>
+        {
+            using PostRule = EmbeddingSimilarity::FallbackPostRule;
+            using iot  = IOTraits<IO>;
+
+            static void mapping(IO& io, PostRule& rule)
+            {
+                if(iot::outputting(io))
+                {
+                    int                ruleId      = rule.ruleId();
+                    std::vector<float> mRanges     = rule.mRanges();
+                    std::vector<float> nRanges     = rule.nRanges();
+                    std::vector<float> kRanges     = rule.kRanges();
+                    std::vector<float> scoreRanges = rule.scoreRanges();
+                    std::vector<int>   categories  = rule.categories();
+
+                    iot::mapRequired(io, "rule_id", ruleId);
+                    iot::mapRequired(io, "m", mRanges);
+                    iot::mapRequired(io, "n", nRanges);
+                    iot::mapRequired(io, "k", kRanges);
+                    iot::mapOptional(io, "score", scoreRanges);
+                    iot::mapRequired(io, "cats", categories);
+                }
+                else
+                {
+                    int                ruleId = 0;
+                    std::vector<float> mRanges;
+                    std::vector<float> nRanges;
+                    std::vector<float> kRanges;
+                    std::vector<float> scoreRanges;
+                    std::vector<int>   categories;
+
+                    iot::mapRequired(io, "rule_id", ruleId);
+                    iot::mapRequired(io, "m", mRanges);
+                    iot::mapRequired(io, "n", nRanges);
+                    iot::mapRequired(io, "k", kRanges);
+                    iot::mapOptional(io, "score", scoreRanges);
+                    iot::mapRequired(io, "cats", categories);
+
+                    rule = PostRule(ruleId,
+                                    std::move(mRanges),
+                                    std::move(nRanges),
+                                    std::move(kRanges),
+                                    std::move(scoreRanges),
+                                    std::move(categories));
+                }
             }
 
             const static bool flow = false;
