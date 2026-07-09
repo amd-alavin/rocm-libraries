@@ -10,6 +10,7 @@
 #include <hipdnn_flatbuffers_sdk/data_objects/graph_generated.h>
 #include <hipdnn_test_sdk/utilities/CpuFpReferenceLayernorm.hpp>
 #include <hipdnn_test_sdk/utilities/CpuFpReferenceValidation.hpp>
+#include <hipdnn_test_sdk/utilities/FlatbufferDatatypeMapping.hpp>
 #include <hipdnn_test_sdk/utilities/Seeds.hpp>
 #include <hipdnn_test_sdk/utilities/TestTolerances.hpp>
 #include <hipdnn_test_sdk/utilities/cpu_graph_executor/detail/LayernormBpropPlan.hpp>
@@ -22,24 +23,47 @@ using namespace hipdnn_flatbuffers_sdk::flatbuffer_utilities;
 using namespace ::testing;
 using namespace hipdnn_sdk_test_utils;
 
-class TestLayernormBpropPlan : public ::testing::Test
+template <typename T1, typename T2, typename T3>
+struct TypeTriple
+{
+    using First = T1;
+    using Second = T2;
+    using Third = T3;
+};
+
+using LayernormBpropTypes = ::testing::Types<TypeTriple<float, float, float>,
+                                             TypeTriple<half, half, float>,
+                                             TypeTriple<bfloat16, bfloat16, float>,
+                                             TypeTriple<half, float, float>,
+                                             TypeTriple<float, half, float>,
+                                             TypeTriple<double, double, double>>;
+
+template <class T>
+class LayernormBpropPlanTyped : public ::testing::Test
 {
 };
 
-TEST_F(TestLayernormBpropPlan, ExecutePlan)
+TYPED_TEST_SUITE(LayernormBpropPlanTyped, LayernormBpropTypes, );
+
+TYPED_TEST(LayernormBpropPlanTyped, ExecutePlan)
 {
-    auto tolerance = layernorm::getTolerance<float>();
+    using XType = typename TypeParam::First;
+    using YType = typename TypeParam::Second;
+    using ScaleType = typename TypeParam::Third;
+
     const std::vector<int64_t> dims = {6, 3, 32, 32};
     const int64_t normalizedDimCount = 3;
     const unsigned int seed = getGlobalTestSeed();
-    auto graph = buildLayernormBpropGraph(DataType::FLOAT,
-                                          DataType::FLOAT,
-                                          DataType::FLOAT,
-                                          DataType::FLOAT,
-                                          dims,
-                                          normalizedDimCount,
-                                          TensorLayout::NHWC,
-                                          true);
+    auto graph
+        = buildLayernormBpropGraph(hipdnn_test_sdk::utilities::nativeTypeToDataType<XType>(),
+                                   hipdnn_test_sdk::utilities::nativeTypeToDataType<YType>(),
+                                   hipdnn_test_sdk::utilities::nativeTypeToDataType<ScaleType>(),
+                                   hipdnn_test_sdk::utilities::nativeTypeToDataType<YType>(),
+                                   DataType::FLOAT,
+                                   dims,
+                                   normalizedDimCount,
+                                   TensorLayout::NHWC,
+                                   true);
     auto [serializedGraph, serErr] = graph->to_binary();
     ASSERT_TRUE(serErr.is_good()) << serErr.get_message();
     const GraphWrapper graphWrapper(serializedGraph.data(), serializedGraph.size());
@@ -69,25 +93,25 @@ TEST_F(TestLayernormBpropPlan, ExecutePlan)
 
     const std::unordered_map<int64_t, void*> variantPack = planTensorBundle.toHostVariantPack();
 
-    auto shallowDyTensor = createShallowTensor<float>(
+    auto shallowDyTensor = createShallowTensor<YType>(
         params.dyTensor, directTensorBundle.getTensor(attributes.dy_tensor_uid()).rawHostData());
-    auto shallowXTensor = createShallowTensor<float>(
+    auto shallowXTensor = createShallowTensor<XType>(
         params.xTensor, directTensorBundle.getTensor(attributes.x_tensor_uid()).rawHostData());
-    auto shallowScaleTensor = createShallowTensor<float>(
+    auto shallowScaleTensor = createShallowTensor<ScaleType>(
         params.scaleTensor,
         directTensorBundle.getTensor(attributes.scale_tensor_uid()).rawHostData());
-    auto shallowMeanTensor = createShallowTensor<float>(
+    auto shallowMeanTensor = createShallowTensor<YType>(
         params.meanTensor.value(),
         directTensorBundle.getTensor(attributes.mean_tensor_uid().value()).rawHostData());
-    auto shallowInvVarianceTensor = createShallowTensor<float>(
+    auto shallowInvVarianceTensor = createShallowTensor<YType>(
         params.invVarianceTensor.value(),
         directTensorBundle.getTensor(attributes.inv_variance_tensor_uid().value()).rawHostData());
-    auto shallowDxTensor = createShallowTensor<float>(
+    auto shallowDxTensor = createShallowTensor<XType>(
         params.dxTensor, directTensorBundle.getTensor(attributes.dx_tensor_uid()).rawHostData());
-    auto shallowDscaleTensor = createShallowTensor<float>(
+    auto shallowDscaleTensor = createShallowTensor<ScaleType>(
         params.dscaleTensor,
         directTensorBundle.getTensor(attributes.dscale_tensor_uid()).rawHostData());
-    auto shallowDbiasTensor = createShallowTensor<float>(
+    auto shallowDbiasTensor = createShallowTensor<ScaleType>(
         params.dbiasTensor,
         directTensorBundle.getTensor(attributes.dbias_tensor_uid()).rawHostData());
 
@@ -102,35 +126,43 @@ TEST_F(TestLayernormBpropPlan, ExecutePlan)
                                    shallowInvVarianceTensor.get(),
                                    normalizedDimCount);
 
-    LayernormBpropPlan<float, float, float, float, float> bpropPlan(std::move(params));
+    LayernormBpropPlan<YType, ScaleType, YType, XType, float> bpropPlan(std::move(params));
     bpropPlan.execute(variantPack);
 
-    const CpuFpReferenceValidation<float> cpuRefOutputValidation(tolerance, tolerance);
+    const CpuFpReferenceValidation<XType> cpuRefOutputValidationDx(
+        layernorm::getTolerance<XType>(), layernorm::getTolerance<XType>());
     EXPECT_TRUE(
-        cpuRefOutputValidation.allClose(directTensorBundle.getTensor(attributes.dx_tensor_uid()),
-                                        planTensorBundle.getTensor(attributes.dx_tensor_uid())));
-    EXPECT_TRUE(cpuRefOutputValidation.allClose(
+        cpuRefOutputValidationDx.allClose(directTensorBundle.getTensor(attributes.dx_tensor_uid()),
+                                          planTensorBundle.getTensor(attributes.dx_tensor_uid())));
+    const CpuFpReferenceValidation<ScaleType> cpuRefOutputValidationDscaleDbias(
+        layernorm::getTolerance<ScaleType>(), layernorm::getTolerance<ScaleType>());
+    EXPECT_TRUE(cpuRefOutputValidationDscaleDbias.allClose(
         directTensorBundle.getTensor(attributes.dscale_tensor_uid()),
         planTensorBundle.getTensor(attributes.dscale_tensor_uid())));
-    EXPECT_TRUE(
-        cpuRefOutputValidation.allClose(directTensorBundle.getTensor(attributes.dbias_tensor_uid()),
-                                        planTensorBundle.getTensor(attributes.dbias_tensor_uid())));
+    EXPECT_TRUE(cpuRefOutputValidationDscaleDbias.allClose(
+        directTensorBundle.getTensor(attributes.dbias_tensor_uid()),
+        planTensorBundle.getTensor(attributes.dbias_tensor_uid())));
 }
 
-TEST_F(TestLayernormBpropPlan, ExecutePlanWithoutOptionals)
+TYPED_TEST(LayernormBpropPlanTyped, ExecutePlanWithoutOptionals)
 {
-    auto tolerance = layernorm::getTolerance<float>();
+    using XType = typename TypeParam::First;
+    using YType = typename TypeParam::Second;
+    using ScaleType = typename TypeParam::Third;
+
     const std::vector<int64_t> dims = {6, 3, 32, 32};
     const int64_t normalizedDimCount = 3;
     const unsigned int seed = getGlobalTestSeed();
-    auto graph = buildLayernormBpropGraph(DataType::FLOAT,
-                                          DataType::FLOAT,
-                                          DataType::FLOAT,
-                                          DataType::FLOAT,
-                                          dims,
-                                          normalizedDimCount,
-                                          TensorLayout::NHWC,
-                                          false);
+    auto graph
+        = buildLayernormBpropGraph(hipdnn_test_sdk::utilities::nativeTypeToDataType<XType>(),
+                                   hipdnn_test_sdk::utilities::nativeTypeToDataType<YType>(),
+                                   hipdnn_test_sdk::utilities::nativeTypeToDataType<ScaleType>(),
+                                   hipdnn_test_sdk::utilities::nativeTypeToDataType<YType>(),
+                                   DataType::FLOAT,
+                                   dims,
+                                   normalizedDimCount,
+                                   TensorLayout::NHWC,
+                                   false);
     auto [serializedGraph, serErr] = graph->to_binary();
     ASSERT_TRUE(serErr.is_good()) << serErr.get_message();
     const GraphWrapper graphWrapper(serializedGraph.data(), serializedGraph.size());
@@ -160,19 +192,19 @@ TEST_F(TestLayernormBpropPlan, ExecutePlanWithoutOptionals)
 
     const std::unordered_map<int64_t, void*> variantPack = planTensorBundle.toHostVariantPack();
 
-    auto shallowDyTensor = createShallowTensor<float>(
+    auto shallowDyTensor = createShallowTensor<YType>(
         params.dyTensor, directTensorBundle.getTensor(attributes.dy_tensor_uid()).rawHostData());
-    auto shallowXTensor = createShallowTensor<float>(
+    auto shallowXTensor = createShallowTensor<XType>(
         params.xTensor, directTensorBundle.getTensor(attributes.x_tensor_uid()).rawHostData());
-    auto shallowScaleTensor = createShallowTensor<float>(
+    auto shallowScaleTensor = createShallowTensor<ScaleType>(
         params.scaleTensor,
         directTensorBundle.getTensor(attributes.scale_tensor_uid()).rawHostData());
-    auto shallowDxTensor = createShallowTensor<float>(
+    auto shallowDxTensor = createShallowTensor<XType>(
         params.dxTensor, directTensorBundle.getTensor(attributes.dx_tensor_uid()).rawHostData());
-    auto shallowDscaleTensor = createShallowTensor<float>(
+    auto shallowDscaleTensor = createShallowTensor<ScaleType>(
         params.dscaleTensor,
         directTensorBundle.getTensor(attributes.dscale_tensor_uid()).rawHostData());
-    auto shallowDbiasTensor = createShallowTensor<float>(
+    auto shallowDbiasTensor = createShallowTensor<ScaleType>(
         params.dbiasTensor,
         directTensorBundle.getTensor(attributes.dbias_tensor_uid()).rawHostData());
 
@@ -184,40 +216,48 @@ TEST_F(TestLayernormBpropPlan, ExecutePlanWithoutOptionals)
         *shallowDscaleTensor,
         *shallowDbiasTensor,
         hipdnn_data_sdk::utilities::LAYERNORM_DEFAULT_EPSILON,
-        static_cast<const hipdnn_data_sdk::utilities::TensorBase<float>*>(nullptr),
-        static_cast<const hipdnn_data_sdk::utilities::TensorBase<float>*>(nullptr),
+        static_cast<const hipdnn_data_sdk::utilities::TensorBase<YType>*>(nullptr),
+        static_cast<const hipdnn_data_sdk::utilities::TensorBase<YType>*>(nullptr),
         normalizedDimCount);
 
-    LayernormBpropPlan<float, float, float, float, float> bpropPlan(std::move(params));
+    LayernormBpropPlan<YType, ScaleType, YType, XType, float> bpropPlan(std::move(params));
     bpropPlan.execute(variantPack);
 
-    const CpuFpReferenceValidation<float> cpuRefOutputValidation(tolerance, tolerance);
+    const CpuFpReferenceValidation<XType> cpuRefOutputValidationDx(
+        layernorm::getTolerance<XType>(), layernorm::getTolerance<XType>());
     EXPECT_TRUE(
-        cpuRefOutputValidation.allClose(directTensorBundle.getTensor(attributes.dx_tensor_uid()),
-                                        planTensorBundle.getTensor(attributes.dx_tensor_uid())));
-    EXPECT_TRUE(cpuRefOutputValidation.allClose(
+        cpuRefOutputValidationDx.allClose(directTensorBundle.getTensor(attributes.dx_tensor_uid()),
+                                          planTensorBundle.getTensor(attributes.dx_tensor_uid())));
+    const CpuFpReferenceValidation<ScaleType> cpuRefOutputValidationDscaleDbias(
+        layernorm::getTolerance<ScaleType>(), layernorm::getTolerance<ScaleType>());
+    EXPECT_TRUE(cpuRefOutputValidationDscaleDbias.allClose(
         directTensorBundle.getTensor(attributes.dscale_tensor_uid()),
         planTensorBundle.getTensor(attributes.dscale_tensor_uid())));
-    EXPECT_TRUE(
-        cpuRefOutputValidation.allClose(directTensorBundle.getTensor(attributes.dbias_tensor_uid()),
-                                        planTensorBundle.getTensor(attributes.dbias_tensor_uid())));
+    EXPECT_TRUE(cpuRefOutputValidationDscaleDbias.allClose(
+        directTensorBundle.getTensor(attributes.dbias_tensor_uid()),
+        planTensorBundle.getTensor(attributes.dbias_tensor_uid())));
 }
 
-TEST_F(TestLayernormBpropPlan, ExecutePlanOnePaddedNormalizedDimCount2)
+TYPED_TEST(LayernormBpropPlanTyped, ExecutePlanOnePaddedNormalizedDimCount2)
 {
-    auto tolerance = layernorm::getTolerance<float>();
+    using XType = typename TypeParam::First;
+    using YType = typename TypeParam::Second;
+    using ScaleType = typename TypeParam::Third;
+
     const std::vector<int64_t> dims = {6, 3, 32, 32};
     const int64_t normalizedDimCount = 2;
     const unsigned int seed = getGlobalTestSeed();
-    auto graph = buildLayernormBpropGraph(DataType::FLOAT,
-                                          DataType::FLOAT,
-                                          DataType::FLOAT,
-                                          DataType::FLOAT,
-                                          dims,
-                                          normalizedDimCount,
-                                          TensorLayout::NHWC,
-                                          true,
-                                          true);
+    auto graph
+        = buildLayernormBpropGraph(hipdnn_test_sdk::utilities::nativeTypeToDataType<XType>(),
+                                   hipdnn_test_sdk::utilities::nativeTypeToDataType<YType>(),
+                                   hipdnn_test_sdk::utilities::nativeTypeToDataType<ScaleType>(),
+                                   hipdnn_test_sdk::utilities::nativeTypeToDataType<YType>(),
+                                   DataType::FLOAT,
+                                   dims,
+                                   normalizedDimCount,
+                                   TensorLayout::NHWC,
+                                   true,
+                                   true);
     auto [serializedGraph, serErr] = graph->to_binary();
     ASSERT_TRUE(serErr.is_good()) << serErr.get_message();
     const GraphWrapper graphWrapper(serializedGraph.data(), serializedGraph.size());
@@ -247,25 +287,25 @@ TEST_F(TestLayernormBpropPlan, ExecutePlanOnePaddedNormalizedDimCount2)
 
     const std::unordered_map<int64_t, void*> variantPack = planTensorBundle.toHostVariantPack();
 
-    auto shallowDyTensor = createShallowTensor<float>(
+    auto shallowDyTensor = createShallowTensor<YType>(
         params.dyTensor, directTensorBundle.getTensor(attributes.dy_tensor_uid()).rawHostData());
-    auto shallowXTensor = createShallowTensor<float>(
+    auto shallowXTensor = createShallowTensor<XType>(
         params.xTensor, directTensorBundle.getTensor(attributes.x_tensor_uid()).rawHostData());
-    auto shallowScaleTensor = createShallowTensor<float>(
+    auto shallowScaleTensor = createShallowTensor<ScaleType>(
         params.scaleTensor,
         directTensorBundle.getTensor(attributes.scale_tensor_uid()).rawHostData());
-    auto shallowMeanTensor = createShallowTensor<float>(
+    auto shallowMeanTensor = createShallowTensor<YType>(
         params.meanTensor.value(),
         directTensorBundle.getTensor(attributes.mean_tensor_uid().value()).rawHostData());
-    auto shallowInvVarianceTensor = createShallowTensor<float>(
+    auto shallowInvVarianceTensor = createShallowTensor<YType>(
         params.invVarianceTensor.value(),
         directTensorBundle.getTensor(attributes.inv_variance_tensor_uid().value()).rawHostData());
-    auto shallowDxTensor = createShallowTensor<float>(
+    auto shallowDxTensor = createShallowTensor<XType>(
         params.dxTensor, directTensorBundle.getTensor(attributes.dx_tensor_uid()).rawHostData());
-    auto shallowDscaleTensor = createShallowTensor<float>(
+    auto shallowDscaleTensor = createShallowTensor<ScaleType>(
         params.dscaleTensor,
         directTensorBundle.getTensor(attributes.dscale_tensor_uid()).rawHostData());
-    auto shallowDbiasTensor = createShallowTensor<float>(
+    auto shallowDbiasTensor = createShallowTensor<ScaleType>(
         params.dbiasTensor,
         directTensorBundle.getTensor(attributes.dbias_tensor_uid()).rawHostData());
 
@@ -280,35 +320,43 @@ TEST_F(TestLayernormBpropPlan, ExecutePlanOnePaddedNormalizedDimCount2)
                                    shallowInvVarianceTensor.get(),
                                    normalizedDimCount);
 
-    LayernormBpropPlan<float, float, float, float, float> bpropPlan(std::move(params));
+    LayernormBpropPlan<YType, ScaleType, YType, XType, float> bpropPlan(std::move(params));
     bpropPlan.execute(variantPack);
 
-    const CpuFpReferenceValidation<float> cpuRefOutputValidation(tolerance, tolerance);
+    const CpuFpReferenceValidation<XType> cpuRefOutputValidationDx(
+        layernorm::getTolerance<XType>(), layernorm::getTolerance<XType>());
     EXPECT_TRUE(
-        cpuRefOutputValidation.allClose(directTensorBundle.getTensor(attributes.dx_tensor_uid()),
-                                        planTensorBundle.getTensor(attributes.dx_tensor_uid())));
-    EXPECT_TRUE(cpuRefOutputValidation.allClose(
+        cpuRefOutputValidationDx.allClose(directTensorBundle.getTensor(attributes.dx_tensor_uid()),
+                                          planTensorBundle.getTensor(attributes.dx_tensor_uid())));
+    const CpuFpReferenceValidation<ScaleType> cpuRefOutputValidationDscaleDbias(
+        layernorm::getTolerance<ScaleType>(), layernorm::getTolerance<ScaleType>());
+    EXPECT_TRUE(cpuRefOutputValidationDscaleDbias.allClose(
         directTensorBundle.getTensor(attributes.dscale_tensor_uid()),
         planTensorBundle.getTensor(attributes.dscale_tensor_uid())));
-    EXPECT_TRUE(
-        cpuRefOutputValidation.allClose(directTensorBundle.getTensor(attributes.dbias_tensor_uid()),
-                                        planTensorBundle.getTensor(attributes.dbias_tensor_uid())));
+    EXPECT_TRUE(cpuRefOutputValidationDscaleDbias.allClose(
+        directTensorBundle.getTensor(attributes.dbias_tensor_uid()),
+        planTensorBundle.getTensor(attributes.dbias_tensor_uid())));
 }
 
-TEST_F(TestLayernormBpropPlan, ExecutePlanTrainingPhase)
+TYPED_TEST(LayernormBpropPlanTyped, ExecutePlanTrainingPhase)
 {
-    auto tolerance = layernorm::getTolerance<float>();
+    using XType = typename TypeParam::First;
+    using YType = typename TypeParam::Second;
+    using ScaleType = typename TypeParam::Third;
+
     const std::vector<int64_t> dims = {6, 3, 32, 32};
     const int64_t normalizedDimCount = 3;
     const unsigned int seed = getGlobalTestSeed();
-    auto graph = buildLayernormBpropGraph(DataType::FLOAT,
-                                          DataType::FLOAT,
-                                          DataType::FLOAT,
-                                          DataType::FLOAT,
-                                          dims,
-                                          normalizedDimCount,
-                                          TensorLayout::NHWC,
-                                          true);
+    auto graph
+        = buildLayernormBpropGraph(hipdnn_test_sdk::utilities::nativeTypeToDataType<XType>(),
+                                   hipdnn_test_sdk::utilities::nativeTypeToDataType<YType>(),
+                                   hipdnn_test_sdk::utilities::nativeTypeToDataType<ScaleType>(),
+                                   hipdnn_test_sdk::utilities::nativeTypeToDataType<YType>(),
+                                   DataType::FLOAT,
+                                   dims,
+                                   normalizedDimCount,
+                                   TensorLayout::NHWC,
+                                   true);
     auto [serializedGraph, serErr] = graph->to_binary();
     ASSERT_TRUE(serErr.is_good()) << serErr.get_message();
     const GraphWrapper graphWrapper(serializedGraph.data(), serializedGraph.size());
@@ -338,25 +386,25 @@ TEST_F(TestLayernormBpropPlan, ExecutePlanTrainingPhase)
 
     const std::unordered_map<int64_t, void*> variantPack = planTensorBundle.toHostVariantPack();
 
-    auto shallowDyTensor = createShallowTensor<float>(
+    auto shallowDyTensor = createShallowTensor<YType>(
         params.dyTensor, directTensorBundle.getTensor(attributes.dy_tensor_uid()).rawHostData());
-    auto shallowXTensor = createShallowTensor<float>(
+    auto shallowXTensor = createShallowTensor<XType>(
         params.xTensor, directTensorBundle.getTensor(attributes.x_tensor_uid()).rawHostData());
-    auto shallowScaleTensor = createShallowTensor<float>(
+    auto shallowScaleTensor = createShallowTensor<ScaleType>(
         params.scaleTensor,
         directTensorBundle.getTensor(attributes.scale_tensor_uid()).rawHostData());
-    auto shallowMeanTensor = createShallowTensor<float>(
+    auto shallowMeanTensor = createShallowTensor<YType>(
         params.meanTensor.value(),
         directTensorBundle.getTensor(attributes.mean_tensor_uid().value()).rawHostData());
-    auto shallowInvVarianceTensor = createShallowTensor<float>(
+    auto shallowInvVarianceTensor = createShallowTensor<YType>(
         params.invVarianceTensor.value(),
         directTensorBundle.getTensor(attributes.inv_variance_tensor_uid().value()).rawHostData());
-    auto shallowDxTensor = createShallowTensor<float>(
+    auto shallowDxTensor = createShallowTensor<XType>(
         params.dxTensor, directTensorBundle.getTensor(attributes.dx_tensor_uid()).rawHostData());
-    auto shallowDscaleTensor = createShallowTensor<float>(
+    auto shallowDscaleTensor = createShallowTensor<ScaleType>(
         params.dscaleTensor,
         directTensorBundle.getTensor(attributes.dscale_tensor_uid()).rawHostData());
-    auto shallowDbiasTensor = createShallowTensor<float>(
+    auto shallowDbiasTensor = createShallowTensor<ScaleType>(
         params.dbiasTensor,
         directTensorBundle.getTensor(attributes.dbias_tensor_uid()).rawHostData());
 
@@ -371,48 +419,59 @@ TEST_F(TestLayernormBpropPlan, ExecutePlanTrainingPhase)
                                    shallowInvVarianceTensor.get(),
                                    normalizedDimCount);
 
-    LayernormBpropPlan<float, float, float, float, float> bpropPlan(std::move(params));
+    LayernormBpropPlan<YType, ScaleType, YType, XType, float> bpropPlan(std::move(params));
     bpropPlan.execute(variantPack);
 
-    const CpuFpReferenceValidation<float> cpuRefOutputValidation(tolerance, tolerance);
+    const CpuFpReferenceValidation<XType> cpuRefOutputValidationDx(
+        layernorm::getTolerance<XType>(), layernorm::getTolerance<XType>());
     EXPECT_TRUE(
-        cpuRefOutputValidation.allClose(directTensorBundle.getTensor(attributes.dx_tensor_uid()),
-                                        planTensorBundle.getTensor(attributes.dx_tensor_uid())));
-    EXPECT_TRUE(cpuRefOutputValidation.allClose(
+        cpuRefOutputValidationDx.allClose(directTensorBundle.getTensor(attributes.dx_tensor_uid()),
+                                          planTensorBundle.getTensor(attributes.dx_tensor_uid())));
+    const CpuFpReferenceValidation<ScaleType> cpuRefOutputValidationDscaleDbias(
+        layernorm::getTolerance<ScaleType>(), layernorm::getTolerance<ScaleType>());
+    EXPECT_TRUE(cpuRefOutputValidationDscaleDbias.allClose(
         directTensorBundle.getTensor(attributes.dscale_tensor_uid()),
         planTensorBundle.getTensor(attributes.dscale_tensor_uid())));
-    EXPECT_TRUE(
-        cpuRefOutputValidation.allClose(directTensorBundle.getTensor(attributes.dbias_tensor_uid()),
-                                        planTensorBundle.getTensor(attributes.dbias_tensor_uid())));
+    EXPECT_TRUE(cpuRefOutputValidationDscaleDbias.allClose(
+        directTensorBundle.getTensor(attributes.dbias_tensor_uid()),
+        planTensorBundle.getTensor(attributes.dbias_tensor_uid())));
 
+    const CpuFpReferenceValidation<YType> cpuRefOutputValidationY(layernorm::getTolerance<YType>(),
+                                                                  layernorm::getTolerance<YType>());
     if(attributes.mean_tensor_uid().has_value())
     {
-        EXPECT_TRUE(cpuRefOutputValidation.allClose(
+        EXPECT_TRUE(cpuRefOutputValidationY.allClose(
             directTensorBundle.getTensor(attributes.mean_tensor_uid().value()),
             planTensorBundle.getTensor(attributes.mean_tensor_uid().value())));
     }
 
     if(attributes.inv_variance_tensor_uid().has_value())
     {
-        EXPECT_TRUE(cpuRefOutputValidation.allClose(
+        EXPECT_TRUE(cpuRefOutputValidationY.allClose(
             directTensorBundle.getTensor(attributes.inv_variance_tensor_uid().value()),
             planTensorBundle.getTensor(attributes.inv_variance_tensor_uid().value())));
     }
 }
 
-TEST_F(TestLayernormBpropPlan, ExecutePlanGetOutputTensorIds)
+TYPED_TEST(LayernormBpropPlanTyped, ExecutePlanGetOutputTensorIds)
 {
+    using XType = typename TypeParam::First;
+    using YType = typename TypeParam::Second;
+    using ScaleType = typename TypeParam::Third;
+
     const std::vector<int64_t> dims = {6, 3, 32, 32};
     const int64_t normalizedDimCount = 3;
     const unsigned int seed = getGlobalTestSeed();
-    auto graph = buildLayernormBpropGraph(DataType::FLOAT,
-                                          DataType::FLOAT,
-                                          DataType::FLOAT,
-                                          DataType::FLOAT,
-                                          dims,
-                                          normalizedDimCount,
-                                          TensorLayout::NHWC,
-                                          true);
+    auto graph
+        = buildLayernormBpropGraph(hipdnn_test_sdk::utilities::nativeTypeToDataType<XType>(),
+                                   hipdnn_test_sdk::utilities::nativeTypeToDataType<YType>(),
+                                   hipdnn_test_sdk::utilities::nativeTypeToDataType<ScaleType>(),
+                                   hipdnn_test_sdk::utilities::nativeTypeToDataType<YType>(),
+                                   DataType::FLOAT,
+                                   dims,
+                                   normalizedDimCount,
+                                   TensorLayout::NHWC,
+                                   true);
     auto [serializedGraph, serErr] = graph->to_binary();
     ASSERT_TRUE(serErr.is_good()) << serErr.get_message();
     const GraphWrapper graphWrapper(serializedGraph.data(), serializedGraph.size());
@@ -442,25 +501,25 @@ TEST_F(TestLayernormBpropPlan, ExecutePlanGetOutputTensorIds)
 
     const std::unordered_map<int64_t, void*> variantPack = planTensorBundle.toHostVariantPack();
 
-    auto shallowDyTensor = createShallowTensor<float>(
+    auto shallowDyTensor = createShallowTensor<YType>(
         params.dyTensor, directTensorBundle.getTensor(attributes.dy_tensor_uid()).rawHostData());
-    auto shallowXTensor = createShallowTensor<float>(
+    auto shallowXTensor = createShallowTensor<XType>(
         params.xTensor, directTensorBundle.getTensor(attributes.x_tensor_uid()).rawHostData());
-    auto shallowScaleTensor = createShallowTensor<float>(
+    auto shallowScaleTensor = createShallowTensor<ScaleType>(
         params.scaleTensor,
         directTensorBundle.getTensor(attributes.scale_tensor_uid()).rawHostData());
-    auto shallowMeanTensor = createShallowTensor<float>(
+    auto shallowMeanTensor = createShallowTensor<YType>(
         params.meanTensor.value(),
         directTensorBundle.getTensor(attributes.mean_tensor_uid().value()).rawHostData());
-    auto shallowInvVarianceTensor = createShallowTensor<float>(
+    auto shallowInvVarianceTensor = createShallowTensor<YType>(
         params.invVarianceTensor.value(),
         directTensorBundle.getTensor(attributes.inv_variance_tensor_uid().value()).rawHostData());
-    auto shallowDxTensor = createShallowTensor<float>(
+    auto shallowDxTensor = createShallowTensor<XType>(
         params.dxTensor, directTensorBundle.getTensor(attributes.dx_tensor_uid()).rawHostData());
-    auto shallowDscaleTensor = createShallowTensor<float>(
+    auto shallowDscaleTensor = createShallowTensor<ScaleType>(
         params.dscaleTensor,
         directTensorBundle.getTensor(attributes.dscale_tensor_uid()).rawHostData());
-    auto shallowDbiasTensor = createShallowTensor<float>(
+    auto shallowDbiasTensor = createShallowTensor<ScaleType>(
         params.dbiasTensor,
         directTensorBundle.getTensor(attributes.dbias_tensor_uid()).rawHostData());
 
@@ -477,7 +536,7 @@ TEST_F(TestLayernormBpropPlan, ExecutePlanGetOutputTensorIds)
 
     const std::vector<int64_t> expectedIds
         = {params.dxTensor.uid, params.dscaleTensor.uid, params.dbiasTensor.uid};
-    const LayernormBpropPlan<float, float, float, float, float> bpropPlan(std::move(params));
+    const LayernormBpropPlan<YType, ScaleType, YType, XType, float> bpropPlan(std::move(params));
     EXPECT_EQ(bpropPlan.getOutputTensorIds(), expectedIds);
 }
 
@@ -486,6 +545,7 @@ TEST(TestLayernormBpropPlanBuilder, PlanConstruction)
     const std::vector<int64_t> dims = {1, 1, 1, 1};
     const int64_t normalizedDimCount = 3;
     auto graph = buildLayernormBpropGraph(DataType::FLOAT,
+                                          DataType::FLOAT,
                                           DataType::FLOAT,
                                           DataType::FLOAT,
                                           DataType::FLOAT,
@@ -517,6 +577,7 @@ TEST(TestLayernormBpropPlanBuilder, IsApplicable)
     const std::vector<int64_t> dims = {1, 1, 1, 1};
     const int64_t normalizedDimCount = 3;
     auto graph = buildLayernormBpropGraph(DataType::FLOAT,
+                                          DataType::FLOAT,
                                           DataType::FLOAT,
                                           DataType::FLOAT,
                                           DataType::FLOAT,
@@ -560,6 +621,7 @@ TEST(TestLayernormBpropPlanBuilder, PlanConstructionTrainingPhase)
                                           DataType::FLOAT,
                                           DataType::FLOAT,
                                           DataType::FLOAT,
+                                          DataType::FLOAT,
                                           dims,
                                           normalizedDimCount,
                                           TensorLayout::NHWC,
@@ -588,6 +650,7 @@ TEST(TestLayernormBpropPlanBuilder, IsApplicableTrainingPhase)
     const std::vector<int64_t> dims = {1, 1, 1, 1};
     const int64_t normalizedDimCount = 3;
     auto graph = buildLayernormBpropGraph(DataType::FLOAT,
+                                          DataType::FLOAT,
                                           DataType::FLOAT,
                                           DataType::FLOAT,
                                           DataType::FLOAT,
@@ -624,6 +687,7 @@ TEST(TestLayernormBpropPlanBuilder, IsApplicableInvalidComputeData)
     const std::vector<int64_t> dims = {1, 1, 1, 1};
     const int64_t normalizedDimCount = 3;
     auto graph = buildLayernormBpropGraph(DataType::FLOAT,
+                                          DataType::FLOAT,
                                           DataType::FLOAT,
                                           DataType::FLOAT,
                                           DataType::FLOAT,

@@ -65,10 +65,10 @@ struct LayernormBpropParams
     std::optional<hipdnn_flatbuffers_sdk::data_objects::TensorAttributesT> epsilonTensor;
 };
 
-template <typename DyDataType,
+template <typename YDataType,
           typename ScaleBiasDataType,
           typename MeanInvVarianceDataType,
-          typename OutputDataType,
+          typename XDataType,
           typename ComputeDataType>
 class LayernormBpropPlan : public IGraphNodePlanExecutor
 {
@@ -85,11 +85,11 @@ public:
 
     void execute(const std::unordered_map<int64_t, void*>& variantPack) override
     {
-        auto shallowDyTensor = createShallowTensor<DyDataType>(
-            _params.dyTensor, variantPack.at(_params.dyTensor.uid));
+        auto shallowDyTensor = createShallowTensor<YDataType>(_params.dyTensor,
+                                                              variantPack.at(_params.dyTensor.uid));
 
         auto shallowXTensor
-            = createShallowTensor<DyDataType>(_params.xTensor, variantPack.at(_params.xTensor.uid));
+            = createShallowTensor<XDataType>(_params.xTensor, variantPack.at(_params.xTensor.uid));
 
         auto shallowScaleTensor = createShallowTensor<ScaleBiasDataType>(
             _params.scaleTensor, variantPack.at(_params.scaleTensor.uid));
@@ -109,8 +109,8 @@ public:
                 variantPack.at(_params.invVarianceTensor.value().uid));
         }
 
-        auto shallowDxTensor = createShallowTensor<OutputDataType>(
-            _params.dxTensor, variantPack.at(_params.dxTensor.uid));
+        auto shallowDxTensor = createShallowTensor<XDataType>(_params.dxTensor,
+                                                              variantPack.at(_params.dxTensor.uid));
 
         auto shallowDscaleTensor = createShallowTensor<ScaleBiasDataType>(
             _params.dscaleTensor, variantPack.at(_params.dscaleTensor.uid));
@@ -126,9 +126,9 @@ public:
                 _params.epsilonTensor.value(), "Epsilon");
         }
 
-        utilities::CpuFpReferenceLayernorm::bprop<DyDataType,
+        utilities::CpuFpReferenceLayernorm::bprop<YDataType,
                                                   ScaleBiasDataType,
-                                                  OutputDataType,
+                                                  XDataType,
                                                   MeanInvVarianceDataType,
                                                   ComputeDataType>(*shallowDyTensor,
                                                                    *shallowXTensor,
@@ -146,18 +146,18 @@ private:
     LayernormBpropParams _params;
 };
 
-template <hipdnn_flatbuffers_sdk::data_objects::DataType DyDataTypeEnum,
+template <hipdnn_flatbuffers_sdk::data_objects::DataType YDataTypeEnum,
           hipdnn_flatbuffers_sdk::data_objects::DataType ScaleBiasDataTypeEnum,
           hipdnn_flatbuffers_sdk::data_objects::DataType MeanInvVarianceDataTypeEnum,
-          hipdnn_flatbuffers_sdk::data_objects::DataType OutputDataTypeEnum,
+          hipdnn_flatbuffers_sdk::data_objects::DataType XDataTypeEnum,
           hipdnn_flatbuffers_sdk::data_objects::DataType ComputeDataTypeEnum>
 class LayernormBpropPlanBuilder : public IGraphNodePlanBuilder
 {
 public:
-    using DyDataType = utilities::DataTypeToNative<DyDataTypeEnum>;
+    using YDataType = utilities::DataTypeToNative<YDataTypeEnum>;
     using ScaleBiasDataType = utilities::DataTypeToNative<ScaleBiasDataTypeEnum>;
     using MeanInvVarianceDataType = utilities::DataTypeToNative<MeanInvVarianceDataTypeEnum>;
-    using OutputDataType = utilities::DataTypeToNative<OutputDataTypeEnum>;
+    using XDataType = utilities::DataTypeToNative<XDataTypeEnum>;
     using ComputeDataType = utilities::DataTypeToNative<ComputeDataTypeEnum>;
 
     bool isApplicable(
@@ -185,10 +185,10 @@ public:
         CHECK_TENSOR_EXISTS(tensorMap, nodeAttributes->dscale_tensor_uid());
         CHECK_TENSOR_EXISTS(tensorMap, nodeAttributes->dbias_tensor_uid());
 
-        CHECK_TENSOR_TYPE(tensorMap, nodeAttributes->dy_tensor_uid(), DyDataTypeEnum);
-        CHECK_TENSOR_TYPE(tensorMap, nodeAttributes->x_tensor_uid(), DyDataTypeEnum);
+        CHECK_TENSOR_TYPE(tensorMap, nodeAttributes->dy_tensor_uid(), YDataTypeEnum);
+        CHECK_TENSOR_TYPE(tensorMap, nodeAttributes->x_tensor_uid(), XDataTypeEnum);
         CHECK_TENSOR_TYPE(tensorMap, nodeAttributes->scale_tensor_uid(), ScaleBiasDataTypeEnum);
-        CHECK_TENSOR_TYPE(tensorMap, nodeAttributes->dx_tensor_uid(), OutputDataTypeEnum);
+        CHECK_TENSOR_TYPE(tensorMap, nodeAttributes->dx_tensor_uid(), XDataTypeEnum);
         CHECK_TENSOR_TYPE(tensorMap, nodeAttributes->dscale_tensor_uid(), ScaleBiasDataTypeEnum);
         CHECK_TENSOR_TYPE(tensorMap, nodeAttributes->dbias_tensor_uid(), ScaleBiasDataTypeEnum);
 
@@ -259,10 +259,10 @@ public:
                                     invVarAttr,
                                     epsilon);
 
-        return std::make_unique<LayernormBpropPlan<DyDataType,
+        return std::make_unique<LayernormBpropPlan<YDataType,
                                                    ScaleBiasDataType,
                                                    MeanInvVarianceDataType,
-                                                   OutputDataType,
+                                                   XDataType,
                                                    ComputeDataType>>(std::move(params));
     }
 };

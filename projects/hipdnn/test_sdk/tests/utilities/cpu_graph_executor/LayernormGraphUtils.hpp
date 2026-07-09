@@ -161,7 +161,8 @@ inline std::shared_ptr<hipdnn_frontend::graph::Graph>
 }
 
 inline std::shared_ptr<hipdnn_frontend::graph::Graph>
-    buildLayernormBpropGraph(hipdnn_flatbuffers_sdk::data_objects::DataType inputDataType,
+    buildLayernormBpropGraph(hipdnn_flatbuffers_sdk::data_objects::DataType xDataType,
+                             hipdnn_flatbuffers_sdk::data_objects::DataType yDataType,
                              hipdnn_flatbuffers_sdk::data_objects::DataType scaleBiasDataType,
                              hipdnn_flatbuffers_sdk::data_objects::DataType meanInvVarianceDataType,
                              hipdnn_flatbuffers_sdk::data_objects::DataType computeDataType,
@@ -211,13 +212,13 @@ inline std::shared_ptr<hipdnn_frontend::graph::Graph>
 
     int64_t uid = 1;
     auto dyAttr = hipdnn_frontend::graph::makeTensorAttributes(
-        "dy", hipdnn_test_sdk::utilities::sdkToFrontendDataType(inputDataType), dims, strides);
+        "dy", hipdnn_test_sdk::utilities::sdkToFrontendDataType(yDataType), dims, strides);
     dyAttr.set_uid(uid++);
     auto dyTensorAttr
         = std::make_shared<hipdnn_frontend::graph::TensorAttributes>(std::move(dyAttr));
 
     auto xAttr = hipdnn_frontend::graph::makeTensorAttributes(
-        "x", hipdnn_test_sdk::utilities::sdkToFrontendDataType(inputDataType), dims, strides);
+        "x", hipdnn_test_sdk::utilities::sdkToFrontendDataType(xDataType), dims, strides);
     xAttr.set_uid(uid++);
     auto xTensorAttr = std::make_shared<hipdnn_frontend::graph::TensorAttributes>(std::move(xAttr));
 
@@ -276,7 +277,7 @@ inline std::shared_ptr<hipdnn_frontend::graph::Graph>
         dxTensorAttr->set_uid(uid++);
     }
     dxTensorAttr->set_name("DX");
-    dxTensorAttr->set_data_type(hipdnn_test_sdk::utilities::sdkToFrontendDataType(inputDataType));
+    dxTensorAttr->set_data_type(hipdnn_test_sdk::utilities::sdkToFrontendDataType(xDataType));
     dxTensorAttr->set_dim(dims);
     dxTensorAttr->set_stride(strides);
     dxTensorAttr->set_is_virtual(false);
@@ -288,7 +289,7 @@ inline std::shared_ptr<hipdnn_frontend::graph::Graph>
     }
     dscaleTensorAttr->set_name("DSCALE");
     dscaleTensorAttr->set_data_type(
-        hipdnn_test_sdk::utilities::sdkToFrontendDataType(inputDataType));
+        hipdnn_test_sdk::utilities::sdkToFrontendDataType(scaleBiasDataType));
     dscaleTensorAttr->set_dim(normalizedDims);
     dscaleTensorAttr->set_stride(normalizedStrides);
     dscaleTensorAttr->set_is_virtual(false);
@@ -300,7 +301,7 @@ inline std::shared_ptr<hipdnn_frontend::graph::Graph>
     }
     dbiasTensorAttr->set_name("DBIAS");
     dbiasTensorAttr->set_data_type(
-        hipdnn_test_sdk::utilities::sdkToFrontendDataType(inputDataType));
+        hipdnn_test_sdk::utilities::sdkToFrontendDataType(scaleBiasDataType));
     dbiasTensorAttr->set_dim(normalizedDims);
     dbiasTensorAttr->set_stride(normalizedStrides);
     dbiasTensorAttr->set_is_virtual(false);

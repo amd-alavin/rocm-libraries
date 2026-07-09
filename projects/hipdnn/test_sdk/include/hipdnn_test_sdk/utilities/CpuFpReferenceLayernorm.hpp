@@ -224,15 +224,15 @@ public:
     //
     // Scale and bias have shape matching the normalized dimensions.
     // Mean and rstd inputs, if provided, have shape matching the batch dimensions.
-    template <class DyDataType,
+    template <class YDataType,
               class ScaleBiasDataType,
-              class DxDataType = DyDataType,
+              class XDataType = YDataType,
               class MeanRstdDataType = ScaleBiasDataType,
               class ComputeDataType = float>
-    static void bprop(const hipdnn_data_sdk::utilities::TensorBase<DyDataType>& dy,
-                      const hipdnn_data_sdk::utilities::TensorBase<DyDataType>& x,
+    static void bprop(const hipdnn_data_sdk::utilities::TensorBase<YDataType>& dy,
+                      const hipdnn_data_sdk::utilities::TensorBase<XDataType>& x,
                       const hipdnn_data_sdk::utilities::TensorBase<ScaleBiasDataType>& scale,
-                      hipdnn_data_sdk::utilities::TensorBase<DxDataType>& dx,
+                      hipdnn_data_sdk::utilities::TensorBase<XDataType>& dx,
                       hipdnn_data_sdk::utilities::TensorBase<ScaleBiasDataType>& dscale,
                       hipdnn_data_sdk::utilities::TensorBase<ScaleBiasDataType>& dbias,
                       [[maybe_unused]] const double epsilon,
@@ -383,7 +383,7 @@ public:
                     auto scaleVal = static_cast<ComputeDataType>(scale.getHostValue(normIndices));
                     auto xVal = static_cast<ComputeDataType>(x.getHostValue(fullIndices));
                     auto dxVal = rstdVal * dyVal * scaleVal - a * xVal - b;
-                    dx.setHostValue(static_cast<DxDataType>(dxVal), fullIndices);
+                    dx.setHostValue(static_cast<XDataType>(dxVal), fullIndices);
                 });
         };
 
