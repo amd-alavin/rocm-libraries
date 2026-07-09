@@ -293,3 +293,114 @@ namespace TensileLite
         };
     } // namespace Fallback
 } // namespace TensileLite
+
+//Example usage:
+
+/*
+
+#include <iostream>
+#include <vector>
+
+#include "fallback.hpp"
+
+namespace
+{
+	// Two tag templates let us define many unique keys while keeping only float/int families.
+	template <int Id>
+	struct FloatTag
+	{
+		using Type = float;
+	};
+
+	template <int Id>
+	struct IntTag
+	{
+		using Type = int;
+	};
+
+	// Input dimensions/categories for this demo.
+	using MTag     = FloatTag<0>;
+	using NTag     = FloatTag<1>;
+	using KTag     = FloatTag<2>;
+	using ScoreTag = FloatTag<3>;
+	using CatTag   = IntTag<0>;
+
+	using CategoryRule = Fallback::Category<CatTag, int>;
+	using MRule        = Fallback::Range<MTag, float>;
+	using NRule        = Fallback::Range<NTag, float>;
+	using KRule        = Fallback::Range<KTag, float>;
+	using ScoreRule    = Fallback::Range<ScoreTag, float>;
+
+	using PostRuleSet = Fallback::RuleSet<CategoryRule, MRule, NRule, KRule, ScoreRule>;
+	using PostFallback = Fallback::Fallback<PostRuleSet>;
+
+	// Build one rule-set: all rules in this set must match (AND semantics).
+	PostRuleSet makeRuleSet(int ruleCategory,
+							std::vector<float> mRanges,
+							std::vector<float> nRanges,
+							std::vector<float> kRanges,
+							std::vector<float> scoreRanges)
+	{
+		return PostRuleSet(CategoryRule({ruleCategory}),
+						   MRule(MRule::fromPairs(mRanges)),
+						   NRule(NRule::fromPairs(nRanges)),
+						   KRule(KRule::fromPairs(kRanges)),
+						   ScoreRule(ScoreRule::fromPairs(scoreRanges)));
+	}
+
+	// Print a single evaluation to show usage clearly.
+	void evaluate(const PostFallback& fb, float m, float n, float k, int cat, float score)
+	{
+		const auto context = Fallback::Context(Fallback::bind<MTag>(m),
+											   Fallback::bind<NTag>(n),
+											   Fallback::bind<KTag>(k),
+											   Fallback::bind<CatTag>(cat),
+											   Fallback::bind<ScoreTag>(score));
+
+		const bool matched = fb.matches(context);
+
+		std::cout << "INPUT: M=" << m << ", N=" << n << ", K=" << k << ", CAT=" << cat
+				  << ", SCORE=" << score << " -> " << (matched ? "MATCH" : "NO MATCH")
+				  << "\n";
+	}
+} // namespace
+
+int main()
+{
+	// RuleSet #1: category=1, medium M/N/K, strong score.
+	const auto rs1 = makeRuleSet(
+		1,
+		{128.0f, 1024.0f}, // M in (128, 1024)
+		{128.0f, 1024.0f}, // N in (128, 1024)
+		{64.0f, 4096.0f},  // K in (64, 4096)
+		{0.80f, 1.01f});   // SCORE in (0.8, 1.01)
+
+	// RuleSet #2: category=2, different range profile and score threshold.
+	const auto rs2 = makeRuleSet(
+		2,
+		{32.0f, 256.0f},   // M in (32, 256)
+		{32.0f, 256.0f},   // N in (32, 256)
+		{16.0f, 1024.0f},  // K in (16, 1024)
+		{0.60f, 0.95f});   // SCORE in (0.6, 0.95)
+
+	// Fallback is OR across rule-sets: if rs1 OR rs2 matches, fallback triggers.
+	const PostFallback fb({rs1, rs2});
+
+	std::cout << "Fallback valid: " << (fb.valid(true) ? "true" : "false") << "\n\n";
+
+	// Should match rs1.
+	evaluate(fb, 512.0f, 512.0f, 2048.0f, 1, 0.92f);
+
+	// Should match rs2.
+	evaluate(fb, 128.0f, 64.0f, 512.0f, 2, 0.70f);
+
+	// Should fail: category mismatch for both rule-sets.
+	evaluate(fb, 512.0f, 512.0f, 2048.0f, 3, 0.92f);
+
+	// Should fail: score too low for rs1 and too high-ranged dimensions for rs2.
+	evaluate(fb, 512.0f, 512.0f, 2048.0f, 1, 0.40f);
+
+	return 0;
+}
+
+*/
