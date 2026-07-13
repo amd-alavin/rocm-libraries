@@ -105,6 +105,7 @@ void generate_kernel(EngineState* states,
 
     EngineState  state = states[state_id];
     unsigned int index = state_id;
+    __syncthreads();
     while(index < size)
     {
         data[index] = generator(&state);
@@ -349,6 +350,7 @@ void generate_sobol_kernel(EngineState* states,
     EngineState  state  = states[gridDim.x * blockDim.x * dimension + state_id];
     const size_t offset = dimension * size;
     unsigned int index  = state_id;
+    __syncthreads();
     while(index < size)
     {
         data[offset + index] = generator(&state);
