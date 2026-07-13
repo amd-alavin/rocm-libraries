@@ -95,7 +95,10 @@ void init_kernel(EngineState*             states,
 
 template<typename EngineState, typename T, typename Generator>
 __global__ __launch_bounds__(RAND_DEFAULT_MAX_BLOCK_SIZE)
-void generate_kernel(EngineState* states, T* data, const size_t size, Generator generator)
+void generate_kernel(EngineState* states,
+                     T* __restrict__ data,
+                     const size_t size,
+                     Generator    generator)
 {
     const unsigned int state_id = blockIdx.x * blockDim.x + threadIdx.x;
     const unsigned int stride   = gridDim.x * blockDim.x;
@@ -149,7 +152,10 @@ struct runner
 
 template<typename T, typename Generator>
 __global__ __launch_bounds__(RAND_DEFAULT_MAX_BLOCK_SIZE)
-void generate_kernel(rand_state_mtgp32_t* states, T* data, const size_t size, Generator generator)
+void generate_kernel(rand_state_mtgp32_t* states,
+                     T* __restrict__ data,
+                     const size_t size,
+                     Generator    generator)
 {
     const unsigned int  state_id  = blockIdx.x;
     const unsigned int  thread_id = threadIdx.x;
@@ -331,7 +337,10 @@ void init_scrambled_sobol_kernel(EngineState* states,
 // generate_kernel for the normal and scrambled sobol generators
 template<typename EngineState, typename T, typename Generator>
 __global__ __launch_bounds__(RAND_DEFAULT_MAX_BLOCK_SIZE)
-void generate_sobol_kernel(EngineState* states, T* data, const size_t size, Generator generator)
+void generate_sobol_kernel(EngineState* states,
+                           T* __restrict__ data,
+                           const size_t size,
+                           Generator    generator)
 {
     const unsigned int dimension = blockIdx.y;
     const unsigned int state_id  = blockIdx.x * blockDim.x + threadIdx.x;
