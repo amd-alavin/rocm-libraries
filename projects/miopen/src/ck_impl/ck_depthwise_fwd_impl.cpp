@@ -43,7 +43,11 @@ constexpr bool RequirePadding     = false;
 
 // Tuple of potential device CK kernels. Shapes taken to target fp16 Pytorch EfficientNet B0 model:
 // https://docs.pytorch.org/vision/main/models/efficientnet.html
-using DeviceConvFwdFactory =
+//
+// The kernel is wavefront-size specialized (BlockSize lanes: 64 on CDNA, 32 on RDNA).
+// The matching list is selected at compile time via MIOPEN_CK_DEPTHWISE_WAVE_SIZE
+// (set per arch in src/ck_impl/CMakeLists.txt).
+using DeviceConvFwdFactory64 =
     std::tuple<ck::tensor_operation::device::DeviceGroupedConvFwd<
                    NDimSpatial,
                    BlockSize,
@@ -276,6 +280,250 @@ using DeviceConvFwdFactory =
                    8, // InScalarPerVector
                    8, // OutScalarPerVector
                    RequirePadding>>;
+
+// Wave32 (RDNA gfx10/gfx11/gfx12) depthwise instances: the BlockSize=32 counterparts of
+// the wave64 list above, covering the same shapes.
+using DeviceConvFwdFactory32 =
+    std::tuple<ck::tensor_operation::device::DeviceGroupedConvFwd<
+                   NDimSpatial,
+                   32, // BlockSize (wave32)
+                   InType,
+                   WeiType,
+                   AccType,
+                   OutType,
+                   S<7, 7>,                              // BlockTileSize
+                   5,                                    // FilterSize
+                   ck::Tuple<S<1, 1>, S<1, 1>, S<2, 2>>, // FilterParam(dilation, stride, padding)
+                   InElementOp,
+                   WeiElementOp,
+                   OutElementOp,
+                   32, // NBatch
+                   4,  // SubTileH
+                   4,  // SubTileW
+                   1,  // InScalarPerVector
+                   1,  // OutScalarPerVector
+                   RequirePadding>,
+               ck::tensor_operation::device::DeviceGroupedConvFwd<
+                   NDimSpatial,
+                   32, // BlockSize (wave32)
+                   InType,
+                   WeiType,
+                   AccType,
+                   OutType,
+                   S<14, 14>,                            // BlockTileSize
+                   5,                                    // FilterSize
+                   ck::Tuple<S<1, 1>, S<1, 1>, S<2, 2>>, // FilterParam(dilation, stride, padding)
+                   InElementOp,
+                   WeiElementOp,
+                   OutElementOp,
+                   32, // NBatch
+                   4,  // SubTileH
+                   4,  // SubTileW
+                   2,  // InScalarPerVector
+                   2,  // OutScalarPerVector
+                   RequirePadding>,
+               ck::tensor_operation::device::DeviceGroupedConvFwd<
+                   NDimSpatial,
+                   32, // BlockSize (wave32)
+                   InType,
+                   WeiType,
+                   AccType,
+                   OutType,
+                   S<28, 28>,                            // BlockTileSize
+                   5,                                    // FilterSize
+                   ck::Tuple<S<1, 1>, S<1, 1>, S<2, 2>>, // FilterParam(dilation, stride, padding)
+                   InElementOp,
+                   WeiElementOp,
+                   OutElementOp,
+                   32, // NBatch
+                   3,  // SubTileH
+                   12, // SubTileW
+                   4,  // InScalarPerVector
+                   4,  // OutScalarPerVector
+                   RequirePadding>,
+               ck::tensor_operation::device::DeviceGroupedConvFwd<
+                   NDimSpatial,
+                   32, // BlockSize (wave32)
+                   InType,
+                   WeiType,
+                   AccType,
+                   OutType,
+                   S<14, 14>,                            // BlockTileSize
+                   5,                                    // FilterSize
+                   ck::Tuple<S<1, 1>, S<2, 2>, S<2, 2>>, // FilterParam(dilation, stride, padding)
+                   InElementOp,
+                   WeiElementOp,
+                   OutElementOp,
+                   32, // NBatch
+                   4,  // SubTileH
+                   4,  // SubTileW
+                   2,  // InScalarPerVector
+                   1,  // OutScalarPerVector
+                   RequirePadding>,
+               ck::tensor_operation::device::DeviceGroupedConvFwd<
+                   NDimSpatial,
+                   32, // BlockSize (wave32)
+                   InType,
+                   WeiType,
+                   AccType,
+                   OutType,
+                   S<28, 28>,                            // BlockTileSize
+                   5,                                    // FilterSize
+                   ck::Tuple<S<1, 1>, S<2, 2>, S<2, 2>>, // FilterParam(dilation, stride, padding)
+                   InElementOp,
+                   WeiElementOp,
+                   OutElementOp,
+                   32, // NBatch
+                   4,  // SubTileH
+                   4,  // SubTileW
+                   4,  // InScalarPerVector
+                   2,  // OutScalarPerVector
+                   RequirePadding>,
+               ck::tensor_operation::device::DeviceGroupedConvFwd<
+                   NDimSpatial,
+                   32, // BlockSize (wave32)
+                   InType,
+                   WeiType,
+                   AccType,
+                   OutType,
+                   S<56, 56>,                            // BlockTileSize
+                   5,                                    // FilterSize
+                   ck::Tuple<S<1, 1>, S<2, 2>, S<2, 2>>, // FilterParam(dilation, stride, padding)
+                   InElementOp,
+                   WeiElementOp,
+                   OutElementOp,
+                   8,  // NBatch
+                   3,  // SubTileH
+                   12, // SubTileW
+                   8,  // InScalarPerVector
+                   4,  // OutScalarPerVector
+                   RequirePadding>,
+               ck::tensor_operation::device::DeviceGroupedConvFwd<
+                   NDimSpatial,
+                   32, // BlockSize (wave32)
+                   InType,
+                   WeiType,
+                   AccType,
+                   OutType,
+                   S<7, 7>,                              // BlockTileSize
+                   3,                                    // FilterSize
+                   ck::Tuple<S<1, 1>, S<1, 1>, S<1, 1>>, // FilterParam(dilation, stride, padding)
+                   InElementOp,
+                   WeiElementOp,
+                   OutElementOp,
+                   32, // NBatch
+                   4,  // SubTileH
+                   4,  // SubTileW
+                   1,  // InScalarPerVector
+                   1,  // OutScalarPerVector
+                   RequirePadding>,
+               ck::tensor_operation::device::DeviceGroupedConvFwd<
+                   NDimSpatial,
+                   32, // BlockSize (wave32)
+                   InType,
+                   WeiType,
+                   AccType,
+                   OutType,
+                   S<14, 14>,                            // BlockTileSize
+                   3,                                    // FilterSize
+                   ck::Tuple<S<1, 1>, S<1, 1>, S<1, 1>>, // FilterParam(dilation, stride, padding)
+                   InElementOp,
+                   WeiElementOp,
+                   OutElementOp,
+                   32, // NBatch
+                   4,  // SubTileH
+                   4,  // SubTileW
+                   2,  // InScalarPerVector
+                   2,  // OutScalarPerVector
+                   RequirePadding>,
+               ck::tensor_operation::device::DeviceGroupedConvFwd<
+                   NDimSpatial,
+                   32, // BlockSize (wave32)
+                   InType,
+                   WeiType,
+                   AccType,
+                   OutType,
+                   S<56, 56>,                            // BlockTileSize
+                   3,                                    // FilterSize
+                   ck::Tuple<S<1, 1>, S<1, 1>, S<1, 1>>, // FilterParam(dilation, stride, padding)
+                   InElementOp,
+                   WeiElementOp,
+                   OutElementOp,
+                   8,  // NBatch
+                   7,  // SubTileH
+                   16, // SubTileW
+                   8,  // InScalarPerVector
+                   8,  // OutScalarPerVector
+                   RequirePadding>,
+               ck::tensor_operation::device::DeviceGroupedConvFwd<
+                   NDimSpatial,
+                   32, // BlockSize (wave32)
+                   InType,
+                   WeiType,
+                   AccType,
+                   OutType,
+                   S<112, 112>,                          // BlockTileSize
+                   3,                                    // FilterSize
+                   ck::Tuple<S<1, 1>, S<1, 1>, S<1, 1>>, // FilterParam(dilation, stride, padding)
+                   InElementOp,
+                   WeiElementOp,
+                   OutElementOp,
+                   2,  // NBatch
+                   7,  // SubTileH
+                   56, // SubTileW
+                   8,  // InScalarPerVector
+                   8,  // OutScalarPerVector
+                   RequirePadding>,
+               ck::tensor_operation::device::DeviceGroupedConvFwd<
+                   NDimSpatial,
+                   32, // BlockSize (wave32)
+                   InType,
+                   WeiType,
+                   AccType,
+                   OutType,
+                   S<28, 28>,                            // BlockTileSize
+                   3,                                    // FilterSize
+                   ck::Tuple<S<1, 1>, S<2, 2>, S<1, 1>>, // FilterParam(dilation, stride, padding)
+                   InElementOp,
+                   WeiElementOp,
+                   OutElementOp,
+                   32, // NBatch
+                   4,  // SubTileH
+                   4,  // SubTileW
+                   4,  // InScalarPerVector
+                   2,  // OutScalarPerVector
+                   RequirePadding>,
+               ck::tensor_operation::device::DeviceGroupedConvFwd<
+                   NDimSpatial,
+                   32, // BlockSize (wave32)
+                   InType,
+                   WeiType,
+                   AccType,
+                   OutType,
+                   S<112, 112>,                          // BlockTileSize
+                   3,                                    // FilterSize
+                   ck::Tuple<S<1, 1>, S<2, 2>, S<1, 1>>, // FilterParam(dilation, stride, padding)
+                   InElementOp,
+                   WeiElementOp,
+                   OutElementOp,
+                   8,  // NBatch
+                   7,  // SubTileH
+                   16, // SubTileW
+                   8,  // InScalarPerVector
+                   8,  // OutScalarPerVector
+                   RequirePadding>>;
+
+#ifndef MIOPEN_CK_DEPTHWISE_WAVE_SIZE
+// Fallback when the per-arch value is not provided by the build; wave64 is the
+// historical default. src/ck_impl/CMakeLists.txt sets this per target GPU.
+#define MIOPEN_CK_DEPTHWISE_WAVE_SIZE 64
+#endif
+
+#if MIOPEN_CK_DEPTHWISE_WAVE_SIZE == 32
+using DeviceConvFwdFactory = DeviceConvFwdFactory32;
+#else
+using DeviceConvFwdFactory = DeviceConvFwdFactory64;
+#endif
 
 // ---------------------------------------------------------------------------
 // CKArgs -- extracts convolution dimensions from ProblemDescription for the
