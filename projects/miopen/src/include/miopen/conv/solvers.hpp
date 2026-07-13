@@ -4643,6 +4643,10 @@ struct ConvHipImplicitGemm3DGroupWrwXdlops final
 private:
     template <typename DataType>
     bool CheckCKApplicability(const miopen::conv::ProblemDescription&) const;
+
+    template <typename DataType>
+    std::size_t GetCKMaxWorkspaceSize(const miopen::conv::ProblemDescription&) const;
+    size_t GetCKMaxWorkspaceSize(const miopen::conv::ProblemDescription& problem) const;
 };
 
 struct PerformanceConfigHipImplicitGemm3DGroupBwdXdlops
@@ -4815,6 +4819,8 @@ struct ConvHipImplicitGemmGroupBwdXdlops final
 private:
     template <typename DataType>
     bool CheckCKApplicability(const miopen::conv::ProblemDescription&) const;
+
+    size_t GetCKMaxWorkspaceSize(const miopen::conv::ProblemDescription& problem) const;
 };
 
 struct PerformanceConfigHipImplicitGemmGroupWrwXdlops
@@ -4909,6 +4915,8 @@ struct ConvHipImplicitGemmGroupWrwXdlops final
 private:
     template <typename DataType>
     bool CheckCKApplicability(const miopen::conv::ProblemDescription&) const;
+
+    size_t GetCKMaxWorkspaceSize(const miopen::conv::ProblemDescription& problem) const;
 };
 
 } // namespace conv
