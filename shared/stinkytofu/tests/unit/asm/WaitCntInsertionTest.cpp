@@ -351,6 +351,41 @@ st.func @test_ds_read_wmma() {
     EXPECT_EQ(waitcnts[1].waitData->kmcnt, -1);
 }
 
+TEST_F(WaitCntInsertionTest, BufferStoreDoesNotConsumeLoadcntWindow) {
+    std::string irString = R"(
+st.func @test_buffer_store_not_loadcnt() {
+^entry:
+  v0 = "st.buffer_load_b32"(v40) { issueCycles = 1, latencyCycles = 20 }
+  "st.buffer_store_b32"(v5, v41) { issueCycles = 1, latencyCycles = 20 }
+  v2 = "st.buffer_load_b32"(v42) { issueCycles = 1, latencyCycles = 20 }
+  v3 = "st.v_add_f32"(v0, v0) { issueCycles = 1, latencyCycles = 1 }
+}
+)";
+
+    StinkyIRConverter converter(getArch());
+    auto* func = parseIR(irString, converter);
+    ASSERT_NE(func, nullptr);
+
+    runInsertionPass(*func);
+
+    BasicBlock& entryBB = *func->begin();
+    auto waitcnts = getAllWaitCnts(entryBB);
+
+    ASSERT_EQ(waitcnts.size(), 1) << "Only the buffer-load RAW consumer should need a wait";
+
+    StinkyInstruction* add = findNthInst(entryBB, GFX::v_add_f32, 0);
+    ASSERT_NE(add, nullptr);
+
+    int addPos = getInstructionPosition(entryBB, add);
+    EXPECT_EQ(waitcnts[0].position, addPos - 1);
+    EXPECT_EQ(waitcnts[0].waitData->vlcnt, 1)
+        << "The intervening buffer_store_b32 must not count against loadcnt";
+    EXPECT_EQ(waitcnts[0].waitData->vscnt, -1);
+    EXPECT_EQ(waitcnts[0].waitData->dlcnt, -1);
+    EXPECT_EQ(waitcnts[0].waitData->dscnt, -1);
+    EXPECT_EQ(waitcnts[0].waitData->kmcnt, -1);
+}
+
 /**
  * @brief SMRD scalar loads (s_load_*) consumed downstream -> s_wait_kmcnt.
  *
