@@ -25,7 +25,7 @@ from pathlib import Path
 
 from rocke.assets import platform_root
 
-_LIBROOT = Path(__file__).resolve().parents[1]  # tests -> rocke/library
+_LIBROOT = Path(__file__).resolve().parents[1]  # tests: rocke/library
 _PY_ROOT = platform_root() / "python"
 _DEFAULT_BASELINE = (
     platform_root() / "tests" / "golden" / "rocke_gfx950_smoke_perf.json"
