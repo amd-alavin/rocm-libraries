@@ -52,6 +52,8 @@ class DecodeShape:
     block_size: int
     dtype: str
     label: str
+    use_sinks: bool = False
+    sliding_window: int = 0
 
     @property
     def signature(self) -> str:
@@ -94,6 +96,8 @@ def load_decode_shapes(paths: List[Path]) -> List[DecodeShape]:
                     block_size=int(merged["block_size"]),
                     dtype=str(merged.get("dtype", "bf16")),
                     label=str(merged.get("label", f"kv{merged['seqlen_k']}")),
+                    use_sinks=bool(merged.get("use_sinks", False)),
+                    sliding_window=int(merged.get("sliding_window", 0)),
                 )
                 shapes.append(shape)
     return shapes
@@ -174,6 +178,11 @@ def _make_inputs(
         if use_qq_bias
         else None
     )
+    sinks = (
+        torch.randn(shape.num_query_heads, dtype=dtype, device="cuda") * 0.1
+        if shape.use_sinks
+        else None
+    )
 
     return dict(
         q=q,
@@ -186,6 +195,7 @@ def _make_inputs(
         softcap=softcap,
         alibi_slopes=alibi_slopes,
         qq_bias=qq_bias,
+        sinks=sinks,
     )
 
 
@@ -195,6 +205,9 @@ def _run_triton(
     """Time AITER Triton unified_attention. Returns ms or None on failure."""
     from rocke.runtime import synchronize_and_release, time_launches
     import torch
+
+    if shape.use_sinks:
+        return None
 
     try:
         from aiter.ops.triton.attention.unified_attention import unified_attention as tri  # type: ignore
@@ -271,6 +284,8 @@ def _run_dsl(shape: DecodeShape, data: dict, num_sms: int, *, warmup: int, iters
             dtype=shape.dtype,
             kv_block_size=shape.block_size,
             num_sms=num_sms,
+            use_sinks=shape.use_sinks,
+            sliding_window=shape.sliding_window,
         )
         result = dispatch_attention(req)
         path = result.spec.path  # "2d" or "3d"
@@ -290,6 +305,8 @@ def _run_dsl(shape: DecodeShape, data: dict, num_sms: int, *, warmup: int, iters
             softcap=data["softcap"],
             use_alibi=data["alibi_slopes"] is not None,
             use_qq_bias=data["qq_bias"] is not None,
+            use_sinks=data["sinks"] is not None,
+            sliding_window=shape.sliding_window,
             num_sms=num_sms,
         )
 
@@ -305,6 +322,7 @@ def _run_dsl(shape: DecodeShape, data: dict, num_sms: int, *, warmup: int, iters
                 softmax_scale=data["scale"],
                 block_table=data["block_table"],
                 softcap=data["softcap"],
+                sinks=data["sinks"],
                 alibi_slopes=data["alibi_slopes"],
                 qq_bias=data["qq_bias"],
                 backend=run_backend,
