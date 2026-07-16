@@ -96,7 +96,8 @@ endif()
 # Create executable from separated source files
 add_executable(opencv_vs_rpp_host_benchmarking
     benchmarks_utils.cpp
-    rpp_benchmarks.cpp
+    rpp_host_benchmarks.cpp
+    rpp_hip_benchmarks.cpp
     opencv_benchmarks.cpp
     opencv_vs_rpp_host_benchmarking.cpp
 )
@@ -124,7 +125,7 @@ target_link_libraries(opencv_vs_rpp_host_benchmarking
 target_compile_options(opencv_vs_rpp_host_benchmarking PRIVATE -O3)
 
 # Define HIP platform for AMD ROCm
-target_compile_definitions(opencv_vs_rpp_host_benchmarking PRIVATE __HIP_PLATFORM_AMD__)
+target_compile_definitions(opencv_vs_rpp_host_benchmarking PRIVATE __HIP_PLATFORM_AMD__ GPU_SUPPORT)
 
 message("-- ${White}${PROJECT_NAME} configured successfully${ColourReset}")
 message("-- \tOpenCV: ${OpenCV_VERSION}")

@@ -35,7 +35,7 @@ SOFTWARE.
 
 // ==================== RPP BENCHMARK FUNCTIONS ====================
 
-void benchmark_RPP_Brightness(const vector<Mat>& imgs, bool isColor, float alpha, float beta,
+void benchmark_RPP_HOST_Brightness(const vector<Mat>& imgs, bool isColor, float alpha, float beta,
                               rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -66,7 +66,7 @@ void benchmark_RPP_Brightness(const vector<Mat>& imgs, bool isColor, float alpha
                 duration<double, milli>(end - start).count(), params.str());
 }
 
-void benchmark_RPP_GammaCorrection(const vector<Mat>& imgs, bool isColor, float gamma,
+void benchmark_RPP_HOST_GammaCorrection(const vector<Mat>& imgs, bool isColor, float gamma,
                                    rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -95,7 +95,7 @@ void benchmark_RPP_GammaCorrection(const vector<Mat>& imgs, bool isColor, float 
                 duration<double, milli>(end - start).count(), "gamma=" + to_string(gamma));
 }
 
-void benchmark_RPP_Blend(const vector<Mat>& imgs, bool isColor, float alpha, rppHandle_t handle) {
+void benchmark_RPP_HOST_Blend(const vector<Mat>& imgs, bool isColor, float alpha, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images), imgs2(imgs.size());
     vector<RpptDesc> srcDescs(num_images);
@@ -124,7 +124,7 @@ void benchmark_RPP_Blend(const vector<Mat>& imgs, bool isColor, float alpha, rpp
                 duration<double, milli>(end - start).count(), "alpha=" + to_string(alpha));
 }
 
-void benchmark_RPP_Contrast(const vector<Mat>& imgs, bool isColor, float contrastFactor,
+void benchmark_RPP_HOST_Contrast(const vector<Mat>& imgs, bool isColor, float contrastFactor,
                             float contrastCenter, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -154,7 +154,7 @@ void benchmark_RPP_Contrast(const vector<Mat>& imgs, bool isColor, float contras
                 "factor=" + to_string(contrastFactor) + ", center=" + to_string(contrastCenter));
 }
 
-void benchmark_RPP_Exposure(const vector<Mat>& imgs, bool isColor, float exposureFactor,
+void benchmark_RPP_HOST_Exposure(const vector<Mat>& imgs, bool isColor, float exposureFactor,
                             rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -184,7 +184,7 @@ void benchmark_RPP_Exposure(const vector<Mat>& imgs, bool isColor, float exposur
                 "factor=" + to_string(exposureFactor));
 }
 
-void benchmark_RPP_Hue(const vector<Mat>& imgs, float hueDelta, rppHandle_t handle) {
+void benchmark_RPP_HOST_Hue(const vector<Mat>& imgs, float hueDelta, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
     vector<RpptDesc> srcDescs(num_images);
@@ -212,7 +212,7 @@ void benchmark_RPP_Hue(const vector<Mat>& imgs, float hueDelta, rppHandle_t hand
                 "hueDelta=" + to_string(hueDelta));
 }
 
-void benchmark_RPP_Saturation(const vector<Mat>& imgs, float satFactor, rppHandle_t handle) {
+void benchmark_RPP_HOST_Saturation(const vector<Mat>& imgs, float satFactor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
     vector<RpptDesc> srcDescs(num_images);
@@ -240,7 +240,7 @@ void benchmark_RPP_Saturation(const vector<Mat>& imgs, float satFactor, rppHandl
                 duration<double, milli>(end - start).count(), "factor=" + to_string(satFactor));
 }
 
-void benchmark_RPP_ColorToGreyscale(const vector<Mat>& imgs, rppHandle_t handle) {
+void benchmark_RPP_HOST_ColorToGreyscale(const vector<Mat>& imgs, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
     vector<RpptDesc> srcDescs(num_images);
@@ -266,7 +266,7 @@ void benchmark_RPP_ColorToGreyscale(const vector<Mat>& imgs, rppHandle_t handle)
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_ColorJitter(const vector<Mat>& imgs, float brightness, float contrast,
+void benchmark_RPP_HOST_ColorJitter(const vector<Mat>& imgs, float brightness, float contrast,
                                float saturation, float hue, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -299,7 +299,7 @@ void benchmark_RPP_ColorJitter(const vector<Mat>& imgs, float brightness, float 
                 duration<double, milli>(end - start).count(), params.str());
 }
 
-void benchmark_RPP_BoxFilter(const vector<Mat>& imgs, bool isColor, int kernelSize,
+void benchmark_RPP_HOST_BoxFilter(const vector<Mat>& imgs, bool isColor, int kernelSize,
                              rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -331,7 +331,7 @@ void benchmark_RPP_BoxFilter(const vector<Mat>& imgs, bool isColor, int kernelSi
                 duration<double, milli>(end - start).count(), params.str());
 }
 
-void benchmark_RPP_MedianFilter(const vector<Mat>& imgs, bool isColor, int kernelSize,
+void benchmark_RPP_HOST_MedianFilter(const vector<Mat>& imgs, bool isColor, int kernelSize,
                                 rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -363,7 +363,7 @@ void benchmark_RPP_MedianFilter(const vector<Mat>& imgs, bool isColor, int kerne
                 duration<double, milli>(end - start).count(), params.str());
 }
 
-void benchmark_RPP_GaussianFilter(const vector<Mat>& imgs, bool isColor, int kernelSize,
+void benchmark_RPP_HOST_GaussianFilter(const vector<Mat>& imgs, bool isColor, int kernelSize,
                                   double sigma, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -397,7 +397,7 @@ void benchmark_RPP_GaussianFilter(const vector<Mat>& imgs, bool isColor, int ker
                 duration<double, milli>(end - start).count(), params.str());
 }
 
-void benchmark_RPP_SobelFilter(const vector<Mat>& imgs, bool isColor, int sobelType,
+void benchmark_RPP_HOST_SobelFilter(const vector<Mat>& imgs, bool isColor, int sobelType,
                                rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -427,7 +427,7 @@ void benchmark_RPP_SobelFilter(const vector<Mat>& imgs, bool isColor, int sobelT
                 duration<double, milli>(end - start).count(), "type=" + to_string(sobelType));
 }
 
-void benchmark_RPP_Emboss(const vector<Mat>& imgs, bool isColor, int kernelSize, float strength,
+void benchmark_RPP_HOST_Emboss(const vector<Mat>& imgs, bool isColor, int kernelSize, float strength,
                           rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -461,7 +461,7 @@ void benchmark_RPP_Emboss(const vector<Mat>& imgs, bool isColor, int kernelSize,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
-void benchmark_RPP_Crop(const vector<Mat>& imgs, bool isColor, int cropWidth, int cropHeight,
+void benchmark_RPP_HOST_Crop(const vector<Mat>& imgs, bool isColor, int cropWidth, int cropHeight,
                         rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -494,7 +494,7 @@ void benchmark_RPP_Crop(const vector<Mat>& imgs, bool isColor, int cropWidth, in
                 params.str());
 }
 
-void benchmark_RPP_Resize(const vector<Mat>& imgs, bool isColor, int dstW, int dstH,
+void benchmark_RPP_HOST_Resize(const vector<Mat>& imgs, bool isColor, int dstW, int dstH,
                           RpptInterpolationType interpType, const string& interpName,
                           rppHandle_t handle) {
     int num_images = (int)imgs.size();
@@ -529,7 +529,7 @@ void benchmark_RPP_Resize(const vector<Mat>& imgs, bool isColor, int dstW, int d
                 duration<double, milli>(end - start).count(), params.str());
 }
 
-void benchmark_RPP_Flip(const vector<Mat>& imgs, bool isColor, int flipCode, rppHandle_t handle) {
+void benchmark_RPP_HOST_Flip(const vector<Mat>& imgs, bool isColor, int flipCode, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
     vector<RpptDesc> srcDescs(num_images);
@@ -563,7 +563,7 @@ void benchmark_RPP_Flip(const vector<Mat>& imgs, bool isColor, int flipCode, rpp
                 params.str());
 }
 
-void benchmark_RPP_Rotate(const vector<Mat>& imgs, bool isColor, float angleDeg,
+void benchmark_RPP_HOST_Rotate(const vector<Mat>& imgs, bool isColor, float angleDeg,
                           rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -595,7 +595,7 @@ void benchmark_RPP_Rotate(const vector<Mat>& imgs, bool isColor, float angleDeg,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
-void benchmark_RPP_WarpAffine(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_WarpAffine(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
     vector<RpptDesc> srcDescs(num_images);
@@ -626,7 +626,7 @@ void benchmark_RPP_WarpAffine(const vector<Mat>& imgs, bool isColor, rppHandle_t
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_Fisheye(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_Fisheye(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
     vector<RpptDesc> srcDescs(num_images);
@@ -653,7 +653,7 @@ void benchmark_RPP_Fisheye(const vector<Mat>& imgs, bool isColor, rppHandle_t ha
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_LensCorrection(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_LensCorrection(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
     vector<RpptDesc> srcDescs(num_images);
@@ -720,7 +720,7 @@ void benchmark_RPP_LensCorrection(const vector<Mat>& imgs, bool isColor, rppHand
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_Erode(const vector<Mat>& imgs, bool isColor, int kernelSize,
+void benchmark_RPP_HOST_Erode(const vector<Mat>& imgs, bool isColor, int kernelSize,
                          rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -750,7 +750,7 @@ void benchmark_RPP_Erode(const vector<Mat>& imgs, bool isColor, int kernelSize,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
-void benchmark_RPP_Dilate(const vector<Mat>& imgs, bool isColor, int kernelSize,
+void benchmark_RPP_HOST_Dilate(const vector<Mat>& imgs, bool isColor, int kernelSize,
                           rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -780,7 +780,7 @@ void benchmark_RPP_Dilate(const vector<Mat>& imgs, bool isColor, int kernelSize,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
-void benchmark_RPP_AddScalar(const vector<Mat>& imgs, bool isColor, float addVal,
+void benchmark_RPP_HOST_AddScalar(const vector<Mat>& imgs, bool isColor, float addVal,
                              rppHandle_t handle) {
     int num_images = (int)imgs.size();
     int channels = isColor ? 3 : 1;
@@ -861,7 +861,7 @@ void benchmark_RPP_AddScalar(const vector<Mat>& imgs, bool isColor, float addVal
                 duration<double, milli>(end - start).count(), "value=" + to_string(addVal));
 }
 
-void benchmark_RPP_SubtractScalar(const vector<Mat>& imgs, bool isColor, float subVal,
+void benchmark_RPP_HOST_SubtractScalar(const vector<Mat>& imgs, bool isColor, float subVal,
                                   rppHandle_t handle) {
     int num_images = (int)imgs.size();
     int channels = isColor ? 3 : 1;
@@ -943,7 +943,7 @@ void benchmark_RPP_SubtractScalar(const vector<Mat>& imgs, bool isColor, float s
                 duration<double, milli>(end - start).count(), "value=" + to_string(subVal));
 }
 
-void benchmark_RPP_MultiplyScalar(const vector<Mat>& imgs, bool isColor, float mulVal,
+void benchmark_RPP_HOST_MultiplyScalar(const vector<Mat>& imgs, bool isColor, float mulVal,
                                   rppHandle_t handle) {
     int num_images = (int)imgs.size();
     int channels = isColor ? 3 : 1;
@@ -1025,7 +1025,7 @@ void benchmark_RPP_MultiplyScalar(const vector<Mat>& imgs, bool isColor, float m
                 duration<double, milli>(end - start).count(), "value=" + to_string(mulVal));
 }
 
-void benchmark_RPP_BitwiseAnd(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_BitwiseAnd(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images), imgs2(imgs.size());
     vector<RpptDesc> srcDescs(num_images);
@@ -1054,7 +1054,7 @@ void benchmark_RPP_BitwiseAnd(const vector<Mat>& imgs, bool isColor, rppHandle_t
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_BitwiseOr(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_BitwiseOr(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images), imgs2(imgs.size());
     vector<RpptDesc> srcDescs(num_images);
@@ -1083,7 +1083,7 @@ void benchmark_RPP_BitwiseOr(const vector<Mat>& imgs, bool isColor, rppHandle_t 
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_BitwiseNot(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_BitwiseNot(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
     vector<RpptDesc> srcDescs(num_images);
@@ -1111,7 +1111,7 @@ void benchmark_RPP_BitwiseNot(const vector<Mat>& imgs, bool isColor, rppHandle_t
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_TensorMin(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_TensorMin(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     // For grayscale: output length = n, For RGB: output length = n * 4
     Rpp32u outputLength = isColor ? (num_images * 4) : num_images;
@@ -1140,7 +1140,7 @@ void benchmark_RPP_TensorMin(const vector<Mat>& imgs, bool isColor, rppHandle_t 
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_TensorMax(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_TensorMax(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     // For grayscale: output length = n, For RGB: output length = n * 4
     Rpp32u outputLength = isColor ? (num_images * 4) : num_images;
@@ -1169,7 +1169,7 @@ void benchmark_RPP_TensorMax(const vector<Mat>& imgs, bool isColor, rppHandle_t 
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_TensorSum(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_TensorSum(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     // For grayscale: output length = n, For RGB: output length = n * 4
     Rpp32u outputLength = isColor ? (num_images * 4) : num_images;
@@ -1198,7 +1198,7 @@ void benchmark_RPP_TensorSum(const vector<Mat>& imgs, bool isColor, rppHandle_t 
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_TensorMean(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_TensorMean(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     // For grayscale: output length = n, For RGB: output length = n * 4
     Rpp32u outputLength = isColor ? (num_images * 4) : num_images;
@@ -1227,7 +1227,7 @@ void benchmark_RPP_TensorMean(const vector<Mat>& imgs, bool isColor, rppHandle_t
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_TensorStddev(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_TensorStddev(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     // For grayscale: output length = n, For RGB: output length = n * 4
     Rpp32u outputLength = isColor ? (num_images * 4) : num_images;
@@ -1265,7 +1265,7 @@ void benchmark_RPP_TensorStddev(const vector<Mat>& imgs, bool isColor, rppHandle
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_Threshold(const vector<Mat>& imgs, bool isColor, double thresh,
+void benchmark_RPP_HOST_Threshold(const vector<Mat>& imgs, bool isColor, double thresh,
                              rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -1303,7 +1303,7 @@ void benchmark_RPP_Threshold(const vector<Mat>& imgs, bool isColor, double thres
                 duration<double, milli>(end - start).count(), "threshold=" + to_string(thresh));
 }
 
-void benchmark_RPP_GaussianNoise(const vector<Mat>& imgs, bool isColor, float mean, float stddev,
+void benchmark_RPP_HOST_GaussianNoise(const vector<Mat>& imgs, bool isColor, float mean, float stddev,
                                  rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -1334,7 +1334,7 @@ void benchmark_RPP_GaussianNoise(const vector<Mat>& imgs, bool isColor, float me
                 "mean=" + to_string(mean) + ", stddev=" + to_string(stddev));
 }
 
-void benchmark_RPP_SaltAndPepperNoise(const vector<Mat>& imgs, bool isColor, float noiseProb,
+void benchmark_RPP_HOST_SaltAndPepperNoise(const vector<Mat>& imgs, bool isColor, float noiseProb,
                                       rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -1370,7 +1370,7 @@ void benchmark_RPP_SaltAndPepperNoise(const vector<Mat>& imgs, bool isColor, flo
                 "probability=" + to_string(noiseProb));
 }
 
-void benchmark_RPP_Copy(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_Copy(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
     vector<RpptDesc> srcDescs(num_images);
@@ -1395,7 +1395,7 @@ void benchmark_RPP_Copy(const vector<Mat>& imgs, bool isColor, rppHandle_t handl
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_BitwiseXor(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_BitwiseXor(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
     vector<RpptDesc> srcDescs(num_images);
@@ -1425,7 +1425,7 @@ void benchmark_RPP_BitwiseXor(const vector<Mat>& imgs, bool isColor, rppHandle_t
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_HistogramEqualize(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_HistogramEqualize(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
     vector<RpptDesc> srcDescs(num_images);
@@ -1453,7 +1453,7 @@ void benchmark_RPP_HistogramEqualize(const vector<Mat>& imgs, bool isColor, rppH
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_Transpose(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_Transpose(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     int channels = isColor ? 3 : 1;
     int height = imgs[0].rows;
@@ -1535,7 +1535,7 @@ void benchmark_RPP_Transpose(const vector<Mat>& imgs, bool isColor, rppHandle_t 
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_LUT(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_LUT(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
     vector<RpptDesc> srcDescs(num_images);
@@ -1565,7 +1565,7 @@ void benchmark_RPP_LUT(const vector<Mat>& imgs, bool isColor, rppHandle_t handle
     printResult("RPP HOST LUT", imgs.size(), isColor, duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_Magnitude(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_Magnitude(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
     vector<Mat> grad_x(num_images);
@@ -1602,7 +1602,7 @@ void benchmark_RPP_Magnitude(const vector<Mat>& imgs, bool isColor, rppHandle_t 
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_Phase(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_Phase(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
     vector<Mat> grad_x(num_images);
@@ -1639,7 +1639,7 @@ void benchmark_RPP_Phase(const vector<Mat>& imgs, bool isColor, rppHandle_t hand
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_Normalize(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_Normalize(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     int channels = isColor ? 3 : 1;
     int height = imgs[0].rows;
@@ -1721,7 +1721,7 @@ void benchmark_RPP_Normalize(const vector<Mat>& imgs, bool isColor, rppHandle_t 
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_Normalize_SingleImage(const vector<Mat>& imgs, bool isColor,
+void benchmark_RPP_HOST_Normalize_SingleImage(const vector<Mat>& imgs, bool isColor,
                                          rppHandle_t handle) {
     int num_images = (int)imgs.size();
     int channels = isColor ? 3 : 1;
@@ -1788,7 +1788,7 @@ void benchmark_RPP_Normalize_SingleImage(const vector<Mat>& imgs, bool isColor,
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_WarpPerspective(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_WarpPerspective(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
     vector<RpptDesc> srcDescs(num_images);
@@ -1820,7 +1820,7 @@ void benchmark_RPP_WarpPerspective(const vector<Mat>& imgs, bool isColor, rppHan
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_Remap(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_Remap(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
     vector<RpptDesc> srcDescs(num_images);
@@ -1877,7 +1877,7 @@ void benchmark_RPP_Remap(const vector<Mat>& imgs, bool isColor, rppHandle_t hand
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_FusedMultiplyAddScalar(const vector<Mat>& imgs, bool isColor, Rpp32f mul,
+void benchmark_RPP_HOST_FusedMultiplyAddScalar(const vector<Mat>& imgs, bool isColor, Rpp32f mul,
                                           Rpp32f add, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     int channels = isColor ? 3 : 1;
@@ -1957,7 +1957,7 @@ void benchmark_RPP_FusedMultiplyAddScalar(const vector<Mat>& imgs, bool isColor,
                 duration<double, milli>(end - start).count());
 }
 
-void benchmark_RPP_Posterize(const vector<Mat>& imgs, bool isColor, Rpp32u bits,
+void benchmark_RPP_HOST_Posterize(const vector<Mat>& imgs, bool isColor, Rpp32u bits,
                              rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -1989,7 +1989,7 @@ void benchmark_RPP_Posterize(const vector<Mat>& imgs, bool isColor, Rpp32u bits,
                 duration<double, milli>(end - start).count(), ss.str());
 }
 
-void benchmark_RPP_Solarize(const vector<Mat>& imgs, bool isColor, Rpp8u threshold,
+void benchmark_RPP_HOST_Solarize(const vector<Mat>& imgs, bool isColor, Rpp8u threshold,
                             rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -2021,7 +2021,7 @@ void benchmark_RPP_Solarize(const vector<Mat>& imgs, bool isColor, Rpp8u thresho
                 duration<double, milli>(end - start).count(), ss.str());
 }
 
-void benchmark_RPP_NoiseShot(const vector<Mat>& imgs, bool isColor, Rpp32f shot_noise_factor,
+void benchmark_RPP_HOST_NoiseShot(const vector<Mat>& imgs, bool isColor, Rpp32f shot_noise_factor,
                              rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -2054,7 +2054,7 @@ void benchmark_RPP_NoiseShot(const vector<Mat>& imgs, bool isColor, Rpp32f shot_
                 duration<double, milli>(end - start).count(), ss.str());
 }
 
-void benchmark_RPP_Gridmask(const vector<Mat>& imgs, bool isColor, Rpp32u tileWidth,
+void benchmark_RPP_HOST_Gridmask(const vector<Mat>& imgs, bool isColor, Rpp32u tileWidth,
                             Rpp32f gridRatio, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -2088,7 +2088,7 @@ void benchmark_RPP_Gridmask(const vector<Mat>& imgs, bool isColor, Rpp32u tileWi
                 duration<double, milli>(end - start).count(), ss.str());
 }
 
-void benchmark_RPP_ColorCast(const vector<Mat>& imgs, bool isColor, Rpp32f rShift, Rpp32f gShift,
+void benchmark_RPP_HOST_ColorCast(const vector<Mat>& imgs, bool isColor, Rpp32f rShift, Rpp32f gShift,
                              Rpp32f bShift, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -2125,7 +2125,7 @@ void benchmark_RPP_ColorCast(const vector<Mat>& imgs, bool isColor, Rpp32f rShif
                 duration<double, milli>(end - start).count(), ss.str());
 }
 
-void benchmark_RPP_ColorTemperature(const vector<Mat>& imgs, bool isColor, Rpp32s adjustmentValue,
+void benchmark_RPP_HOST_ColorTemperature(const vector<Mat>& imgs, bool isColor, Rpp32s adjustmentValue,
                                     rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -2157,7 +2157,7 @@ void benchmark_RPP_ColorTemperature(const vector<Mat>& imgs, bool isColor, Rpp32
                 duration<double, milli>(end - start).count(), ss.str());
 }
 
-void benchmark_RPP_Vignette(const vector<Mat>& imgs, bool isColor, Rpp32f vignetteIntensity,
+void benchmark_RPP_HOST_Vignette(const vector<Mat>& imgs, bool isColor, Rpp32f vignetteIntensity,
                             rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -2189,7 +2189,7 @@ void benchmark_RPP_Vignette(const vector<Mat>& imgs, bool isColor, Rpp32f vignet
                 duration<double, milli>(end - start).count(), ss.str());
 }
 
-void benchmark_RPP_NonLinearBlend(const vector<Mat>& imgs, bool isColor, Rpp32f stdDev,
+void benchmark_RPP_HOST_NonLinearBlend(const vector<Mat>& imgs, bool isColor, Rpp32f stdDev,
                                   rppHandle_t handle) {
     int num_images = (int)imgs.size();
     if (num_images < 2) {
@@ -2227,7 +2227,7 @@ void benchmark_RPP_NonLinearBlend(const vector<Mat>& imgs, bool isColor, Rpp32f 
                 duration<double, milli>(end - start).count(), ss.str());
 }
 
-void benchmark_RPP_Erase(const vector<Mat>& imgs, bool isColor, Rpp32u boxesPerImage,
+void benchmark_RPP_HOST_Erase(const vector<Mat>& imgs, bool isColor, Rpp32u boxesPerImage,
                          rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -2283,7 +2283,7 @@ void benchmark_RPP_Erase(const vector<Mat>& imgs, bool isColor, Rpp32u boxesPerI
                 duration<double, milli>(end - start).count(), ss.str());
 }
 
-void benchmark_RPP_CoarseDropout(const vector<Mat>& imgs, bool isColor, Rpp32u maxBoxesPerImage,
+void benchmark_RPP_HOST_CoarseDropout(const vector<Mat>& imgs, bool isColor, Rpp32u maxBoxesPerImage,
                                  rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -2344,7 +2344,7 @@ void benchmark_RPP_CoarseDropout(const vector<Mat>& imgs, bool isColor, Rpp32u m
                 duration<double, milli>(end - start).count(), ss.str());
 }
 
-void benchmark_RPP_GridDropout(const vector<Mat>& imgs, bool isColor, Rpp32u numGridsPerRow,
+void benchmark_RPP_HOST_GridDropout(const vector<Mat>& imgs, bool isColor, Rpp32u numGridsPerRow,
                                Rpp32u numGridsPerColumn, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -2393,7 +2393,7 @@ void benchmark_RPP_GridDropout(const vector<Mat>& imgs, bool isColor, Rpp32u num
                 duration<double, milli>(end - start).count(), ss.str());
 }
 
-void benchmark_RPP_RandomErase(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_RandomErase(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
     vector<RpptDesc> srcDescs(num_images);
@@ -2444,7 +2444,7 @@ void benchmark_RPP_RandomErase(const vector<Mat>& imgs, bool isColor, rppHandle_
                 duration<double, milli>(end - start).count(), "");
 }
 
-void benchmark_RPP_ColorTwist(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_ColorTwist(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     if (!isColor) {
         cout << "ColorTwist requires RGB images. Skipping." << endl;
         return;
@@ -2486,7 +2486,7 @@ void benchmark_RPP_ColorTwist(const vector<Mat>& imgs, bool isColor, rppHandle_t
                 duration<double, milli>(end - start).count(), ss.str());
 }
 
-void benchmark_RPP_CropAndPatch(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_CropAndPatch(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     if (num_images < 2) {
         cout << "CropAndPatch requires at least 2 images. Skipping." << endl;
@@ -2536,7 +2536,7 @@ void benchmark_RPP_CropAndPatch(const vector<Mat>& imgs, bool isColor, rppHandle
                 duration<double, milli>(end - start).count(), "center_quarter");
 }
 
-void benchmark_RPP_CropMirrorNormalize(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_CropMirrorNormalize(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
     vector<RpptDesc> srcDescs(num_images);
@@ -2598,7 +2598,7 @@ void benchmark_RPP_CropMirrorNormalize(const vector<Mat>& imgs, bool isColor, rp
                 duration<double, milli>(end - start).count(), "crop_half+flip+normalize");
 }
 
-void benchmark_RPP_ResizeMirrorNormalize(const vector<Mat>& imgs, bool isColor,
+void benchmark_RPP_HOST_ResizeMirrorNormalize(const vector<Mat>& imgs, bool isColor,
                                          rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -2661,7 +2661,7 @@ void benchmark_RPP_ResizeMirrorNormalize(const vector<Mat>& imgs, bool isColor,
                 duration<double, milli>(end - start).count(), "resize_half+flip+normalize");
 }
 
-void benchmark_RPP_ResizeCropMirror(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_ResizeCropMirror(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
     vector<RpptDesc> srcDescs(num_images);
@@ -2709,7 +2709,7 @@ void benchmark_RPP_ResizeCropMirror(const vector<Mat>& imgs, bool isColor, rppHa
                 duration<double, milli>(end - start).count(), "resize+crop+flip");
 }
 
-void benchmark_RPP_RICAP(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_RICAP(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     if (num_images < 4) {
         cout << "RICAP requires at least 4 images. Skipping." << endl;
@@ -2756,7 +2756,7 @@ void init_cutout_dropout(int batchSize, int maxBoxesPerImage, Rpp32u* numOfBoxes
                          RpptRoiLtrb* anchorBoxInfoTensor, RpptROIPtr roiTensorPtrSrc, int channels,
                          int BitDepthTestMode, int seed, int dropoutType, void* colorBuffer);
 
-void benchmark_RPP_ChannelDropout(const vector<Mat>& imgs, bool isColor, float dropoutProb,
+void benchmark_RPP_HOST_ChannelDropout(const vector<Mat>& imgs, bool isColor, float dropoutProb,
                                   rppHandle_t handle) {
     if (!isColor) {
         cout << "RPP HOST ChannelDropout - skipped (requires RGB)" << endl;
@@ -2799,7 +2799,7 @@ void benchmark_RPP_ChannelDropout(const vector<Mat>& imgs, bool isColor, float d
                 duration<double, milli>(end - start).count(), "prob=" + to_string(dropoutProb));
 }
 
-void benchmark_RPP_CutoutDropout(const vector<Mat>& imgs, bool isColor, Rpp32u numBoxes,
+void benchmark_RPP_HOST_CutoutDropout(const vector<Mat>& imgs, bool isColor, Rpp32u numBoxes,
                                  rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -2845,7 +2845,7 @@ void benchmark_RPP_CutoutDropout(const vector<Mat>& imgs, bool isColor, Rpp32u n
                 duration<double, milli>(end - start).count(), "boxes=" + to_string(numBoxes));
 }
 
-void benchmark_RPP_JpegCompressionDistortion(const vector<Mat>& imgs, bool isColor, Rpp32s quality,
+void benchmark_RPP_HOST_JpegCompressionDistortion(const vector<Mat>& imgs, bool isColor, Rpp32s quality,
                                              rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
@@ -2877,7 +2877,7 @@ void benchmark_RPP_JpegCompressionDistortion(const vector<Mat>& imgs, bool isCol
                 duration<double, milli>(end - start).count(), "quality=" + to_string(quality));
 }
 
-void benchmark_RPP_ChannelPermute(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_ChannelPermute(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     if (!isColor) {
         cout << "RPP HOST ChannelPermute - skipped (requires RGB)" << endl;
         return;
@@ -2917,7 +2917,7 @@ void benchmark_RPP_ChannelPermute(const vector<Mat>& imgs, bool isColor, rppHand
                 duration<double, milli>(end - start).count(), "BGR->RGB");
 }
 
-void benchmark_RPP_Slice(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_Slice(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
 

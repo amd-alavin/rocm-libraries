@@ -84,14 +84,17 @@ vector<Mat> loadBatchImages(const string& directory, int& batchSize, int& maxWid
 
 // Map to store benchmark times and parameters by operation name
 struct BenchmarkData {
-    double rppTime;
+    double rppHostTime;
+    double rppHipTime;
     double opencvTime;
     string parameters;
-    bool rppCalled;
+    bool rppHostCalled;
+    bool rppHipCalled;
     bool opencvCalled;
 
     BenchmarkData()
-        : rppTime(0), opencvTime(0), parameters(""), rppCalled(false), opencvCalled(false) {}
+        : rppHostTime(0), rppHipTime(0), opencvTime(0), parameters(""),
+          rppHostCalled(false), rppHipCalled(false), opencvCalled(false) {}
 };
 
 static map<string, BenchmarkData> benchmarkTimes;  // operationName -> data
@@ -106,74 +109,64 @@ void printResult(const string& name, int batchSize, bool isColor, double totalMs
     if (!params.empty()) cout << ", " << params;
     cout << "): " << avgTime << " ms" << endl;
 
-    // Extract operation name
     string opName = name;
+    string prefix;
 
-    if (opName.find("RPP HOST ") == 0) {
-        opName = opName.substr(9);  // Remove "RPP HOST "
+    if (opName.find("RPP HIP ") == 0) {
+        prefix = "RPP HIP ";
+        opName = opName.substr(8);
+    } else if (opName.find("RPP HOST ") == 0) {
+        prefix = "RPP HOST ";
+        opName = opName.substr(9);
         currentOperation = opName;
         currentIsColor = isColor;
-
-        // For operations with variations (Resize, Flip), append parameter suffix to operation name
-        string displayName = opName;
-        if ((opName == "Resize" || opName == "Flip") && !params.empty()) {
-            // Extract type= from params
-            size_t typePos = params.find("type=");
-            if (typePos != string::npos) {
-                size_t endPos = params.find(",", typePos);
-                string typeValue = (endPos != string::npos)
-                                       ? params.substr(typePos + 5, endPos - typePos - 5)
-                                       : params.substr(typePos + 5);
-                displayName = opName + "_" + typeValue;
-            }
-        }
-
-        // Create unique key using operation name + color mode (for matching)
-        // For operations like Exposure/SobelFilter that have different param names, we use
-        // operation name only
-        string key = displayName + "|" + (isColor ? "rgb" : "gray");
-        benchmarkTimes[key].rppTime = avgTime;
-        benchmarkTimes[key].parameters = params;
-        benchmarkTimes[key].rppCalled = true;
     } else if (opName.find("OpenCV ") == 0) {
-        opName = opName.substr(7);  // Remove "OpenCV "
+        prefix = "OpenCV ";
+        opName = opName.substr(7);
+    } else {
+        return;
+    }
 
-        // For operations with variations (Resize, Flip), append parameter suffix to operation name
-        string displayName = opName;
-        if ((opName == "Resize" || opName == "Flip") && !params.empty()) {
-            // Extract type= from params
-            size_t typePos = params.find("type=");
-            if (typePos != string::npos) {
-                size_t endPos = params.find(",", typePos);
-                string typeValue = (endPos != string::npos)
-                                       ? params.substr(typePos + 5, endPos - typePos - 5)
-                                       : params.substr(typePos + 5);
-                displayName = opName + "_" + typeValue;
-            }
+    string displayName = opName;
+    if ((opName == "Resize" || opName == "Flip") && !params.empty()) {
+        size_t typePos = params.find("type=");
+        if (typePos != string::npos) {
+            size_t endPos = params.find(",", typePos);
+            string typeValue = (endPos != string::npos)
+                                   ? params.substr(typePos + 5, endPos - typePos - 5)
+                                   : params.substr(typePos + 5);
+            displayName = opName + "_" + typeValue;
         }
+    }
 
-        // Create unique key using operation name + color mode (for matching)
-        string key = displayName + "|" + (isColor ? "rgb" : "gray");
-        benchmarkTimes[key].opencvTime = avgTime;
-        benchmarkTimes[key].opencvCalled = true;
+    string key = displayName + "|" + (isColor ? "rgb" : "gray");
+    auto& data = benchmarkTimes[key];
 
-        // If parameters weren't set by RPP (e.g., SobelFilter OpenCV has no params), use OpenCV
-        // params
-        if (benchmarkTimes[key].parameters.empty() && !params.empty())
-            benchmarkTimes[key].parameters = params;
+    if (prefix == "RPP HOST ") {
+        data.rppHostTime = avgTime;
+        data.rppHostCalled = true;
+        data.parameters = params;
+    } else if (prefix == "RPP HIP ") {
+        data.rppHipTime = avgTime;
+        data.rppHipCalled = true;
+        if (data.parameters.empty())
+            data.parameters = params;
+    } else if (prefix == "OpenCV ") {
+        data.opencvTime = avgTime;
+        data.opencvCalled = true;
+        if (data.parameters.empty())
+            data.parameters = params;
+    }
 
-        // After OpenCV result, record the pair
-        auto& data = benchmarkTimes[key];
-        // Only add if both RPP and OpenCV have been called
-        if (data.rppCalled && data.opencvCalled) {
-            if (isColor)
-                rgbResults.emplace_back(displayName, data.parameters, data.opencvTime, data.rppTime,
-                                        rgbImageSize, rgbImageDtype, rgbBatchSize, NUM_RUNS);
-            else
-                grayscaleResults.emplace_back(displayName, data.parameters, data.opencvTime,
-                                              data.rppTime, grayImageSize, grayImageDtype,
-                                              grayBatchSize, NUM_RUNS);
-        }
+    if (data.opencvCalled && data.rppHostCalled && data.rppHipCalled) {
+        if (isColor)
+            rgbResults.emplace_back(displayName, data.parameters, data.opencvTime,
+                                    data.rppHostTime, data.rppHipTime, rgbImageSize,
+                                    rgbImageDtype, rgbBatchSize, NUM_RUNS);
+        else
+            grayscaleResults.emplace_back(displayName, data.parameters, data.opencvTime,
+                                          data.rppHostTime, data.rppHipTime, grayImageSize,
+                                          grayImageDtype, grayBatchSize, NUM_RUNS);
     }
 }
 
@@ -219,6 +212,22 @@ string getOSInfo() {
         return oss.str();
     }
     return "Unknown OS";
+}
+
+// Helper to get GPU info
+string getGPUInfo() {
+    int deviceCount = 0;
+    if (hipGetDeviceCount(&deviceCount) != hipSuccess) {
+        return "GPU detection failed";
+    }
+    if (deviceCount > 0) {
+        hipDeviceProp_t prop;
+        if (hipGetDeviceProperties(&prop, 0) != hipSuccess) {
+            return "Failed to get GPU properties";
+        }
+        return string(prop.name);
+    }
+    return "No GPU detected";
 }
 
 // Helper to get RPP version
@@ -397,6 +406,9 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
     worksheet_write_string(info_sheet, row, 0, "Memory", info_label_format);
     worksheet_write_string(info_sheet, row++, 1, getMemoryInfo().c_str(), NULL);
 
+    worksheet_write_string(info_sheet, row, 0, "GPU", info_label_format);
+    worksheet_write_string(info_sheet, row++, 1, getGPUInfo().c_str(), NULL);
+
     worksheet_write_string(info_sheet, row, 0, "Number of Threads", info_label_format);
     worksheet_write_number(info_sheet, row++, 1, NUM_THREADS, NULL);
 
@@ -411,7 +423,7 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
     worksheet_set_column(gray_sheet, 2, 2, 15, NULL);
     worksheet_set_column(gray_sheet, 3, 3, 12, NULL);
     worksheet_set_column(gray_sheet, 4, 5, 12, NULL);
-    worksheet_set_column(gray_sheet, 6, 8, 15, NULL);
+    worksheet_set_column(gray_sheet, 6, 10, 15, NULL);
 
     row = 0;
     worksheet_write_string(gray_sheet, row, 0, "Operation", header_format);
@@ -422,7 +434,9 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
     worksheet_write_string(gray_sheet, row, 5, "Runs", header_format);
     worksheet_write_string(gray_sheet, row, 6, "OpenCV (avg ms)", header_format);
     worksheet_write_string(gray_sheet, row, 7, "RPP HOST (avg ms)", header_format);
-    worksheet_write_string(gray_sheet, row++, 8, "Speedup", header_format);
+    worksheet_write_string(gray_sheet, row, 8, "RPP HIP (avg ms)", header_format);
+    worksheet_write_string(gray_sheet, row, 9, "HOST Speedup", header_format);
+    worksheet_write_string(gray_sheet, row++, 10, "HIP Speedup", header_format);
 
     for (const auto& result : grayResults) {
         worksheet_write_string(gray_sheet, row, 0, result.operationName.c_str(), NULL);
@@ -432,8 +446,10 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
         worksheet_write_number(gray_sheet, row, 4, result.batchSize, NULL);
         worksheet_write_number(gray_sheet, row, 5, result.numRuns, NULL);
         worksheet_write_number(gray_sheet, row, 6, result.opencvTime, time_format);
-        worksheet_write_number(gray_sheet, row, 7, result.rppTime, time_format);
-        worksheet_write_number(gray_sheet, row, 8, result.speedup, speedup_format);
+        worksheet_write_number(gray_sheet, row, 7, result.rppHostTime, time_format);
+        worksheet_write_number(gray_sheet, row, 8, result.rppHipTime, time_format);
+        worksheet_write_number(gray_sheet, row, 9, result.hostSpeedup, speedup_format);
+        worksheet_write_number(gray_sheet, row, 10, result.hipSpeedup, speedup_format);
         row++;
     }
 
@@ -445,7 +461,7 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
     worksheet_set_column(rgb_sheet, 2, 2, 15, NULL);
     worksheet_set_column(rgb_sheet, 3, 3, 12, NULL);
     worksheet_set_column(rgb_sheet, 4, 5, 12, NULL);
-    worksheet_set_column(rgb_sheet, 6, 8, 15, NULL);
+    worksheet_set_column(rgb_sheet, 6, 10, 15, NULL);
 
     row = 0;
     worksheet_write_string(rgb_sheet, row, 0, "Operation", header_format);
@@ -456,7 +472,9 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
     worksheet_write_string(rgb_sheet, row, 5, "Runs", header_format);
     worksheet_write_string(rgb_sheet, row, 6, "OpenCV (avg ms)", header_format);
     worksheet_write_string(rgb_sheet, row, 7, "RPP HOST (avg ms)", header_format);
-    worksheet_write_string(rgb_sheet, row++, 8, "Speedup", header_format);
+    worksheet_write_string(rgb_sheet, row, 8, "RPP HIP (avg ms)", header_format);
+    worksheet_write_string(rgb_sheet, row, 9, "HOST Speedup", header_format);
+    worksheet_write_string(rgb_sheet, row++, 10, "HIP Speedup", header_format);
 
     for (const auto& result : colorResults) {
         worksheet_write_string(rgb_sheet, row, 0, result.operationName.c_str(), NULL);
@@ -466,8 +484,10 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
         worksheet_write_number(rgb_sheet, row, 4, result.batchSize, NULL);
         worksheet_write_number(rgb_sheet, row, 5, result.numRuns, NULL);
         worksheet_write_number(rgb_sheet, row, 6, result.opencvTime, time_format);
-        worksheet_write_number(rgb_sheet, row, 7, result.rppTime, time_format);
-        worksheet_write_number(rgb_sheet, row, 8, result.speedup, speedup_format);
+        worksheet_write_number(rgb_sheet, row, 7, result.rppHostTime, time_format);
+        worksheet_write_number(rgb_sheet, row, 8, result.rppHipTime, time_format);
+        worksheet_write_number(rgb_sheet, row, 9, result.hostSpeedup, speedup_format);
+        worksheet_write_number(rgb_sheet, row, 10, result.hipSpeedup, speedup_format);
         row++;
     }
 
