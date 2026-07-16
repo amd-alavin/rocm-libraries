@@ -52,7 +52,20 @@ list(APPEND CMAKE_PREFIX_PATH ${ROCM_PATH}/lib/cmake)
 list(APPEND CMAKE_MODULE_PATH ${ROCM_PATH}/share/rpp/test/cmake)
 
 # Find required packages
-find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs calib3d)
+# First find OpenCV without components to detect version
+find_package(OpenCV REQUIRED)
+
+# OpenCV 5.x renamed calib3d to calib - verify correct components are available
+if(OpenCV_VERSION VERSION_GREATER_EQUAL "5.0.0")
+    # For OpenCV 5.x, check for 'calib' component
+    find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs calib)
+    message(STATUS "Using OpenCV ${OpenCV_VERSION} with calib component")
+else()
+    # For OpenCV 4.x, check for 'calib3d' component
+    find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs calib3d)
+    message(STATUS "Using OpenCV ${OpenCV_VERSION} with calib3d component")
+endif()
+
 find_package(OpenMP REQUIRED)
 
 # Find libxlsxwriter (for Excel output)
@@ -94,16 +107,16 @@ else()
 endif()
 
 # Create executable from separated source files
-add_executable(opencv_vs_rpp_host_benchmarking
+add_executable(opencv_vs_rpp_host_hip_benchmarking
     benchmarks_utils.cpp
     rpp_host_benchmarks.cpp
     rpp_hip_benchmarks.cpp
     opencv_benchmarks.cpp
-    opencv_vs_rpp_host_benchmarking.cpp
+    opencv_vs_rpp_host_hip_benchmarking.cpp
 )
 
 # Include directories
-target_include_directories(opencv_vs_rpp_host_benchmarking
+target_include_directories(opencv_vs_rpp_host_hip_benchmarking
     PRIVATE
         ${OpenCV_INCLUDE_DIRS}
         ${rpp_INCLUDE_DIR}
@@ -113,7 +126,7 @@ target_include_directories(opencv_vs_rpp_host_benchmarking
 )
 
 # Link libraries
-target_link_libraries(opencv_vs_rpp_host_benchmarking
+target_link_libraries(opencv_vs_rpp_host_hip_benchmarking
     PRIVATE
         ${OpenCV_LIBS}
         OpenMP::OpenMP_CXX
@@ -122,10 +135,10 @@ target_link_libraries(opencv_vs_rpp_host_benchmarking
 )
 
 # Compiler options
-target_compile_options(opencv_vs_rpp_host_benchmarking PRIVATE -O3)
+target_compile_options(opencv_vs_rpp_host_hip_benchmarking PRIVATE -O3)
 
 # Define HIP platform for AMD ROCm
-target_compile_definitions(opencv_vs_rpp_host_benchmarking PRIVATE __HIP_PLATFORM_AMD__ GPU_SUPPORT)
+target_compile_definitions(opencv_vs_rpp_host_hip_benchmarking PRIVATE __HIP_PLATFORM_AMD__ GPU_SUPPORT)
 
 message("-- ${White}${PROJECT_NAME} configured successfully${ColourReset}")
 message("-- \tOpenCV: ${OpenCV_VERSION}")

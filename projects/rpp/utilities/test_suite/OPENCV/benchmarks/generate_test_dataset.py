@@ -273,7 +273,7 @@ def main():
     print(f"\nDataset is ready for benchmarking!")
     print("\nTo run the benchmark:")
     print(f"  cd {os.path.dirname(os.path.abspath(__file__))}")
-    print("  ./build/opencv_vs_rpp_host_benchmarking")
+    print("  ./build/opencv_vs_rpp_host_hip_benchmarking")
 
 
 if __name__ == "__main__":

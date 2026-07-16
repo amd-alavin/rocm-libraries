@@ -237,6 +237,24 @@ string getRPPVersion() {
     return oss.str();
 }
 
+// Helper to get ROCm version
+string getROCmVersion() {
+    const char* rocm_path = getenv("ROCM_PATH");
+    if (!rocm_path) {
+        rocm_path = "/opt/rocm";
+    }
+
+    string version_file = string(rocm_path) + "/.info/version";
+    ifstream vfile(version_file);
+    if (vfile.is_open()) {
+        string version;
+        getline(vfile, version);
+        vfile.close();
+        return version;
+    }
+    return "Unknown";
+}
+
 // Helper to get current date and time
 string getCurrentDateTime() {
     auto now = chrono::system_clock::now();
@@ -393,6 +411,9 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
 
     worksheet_write_string(info_sheet, row, 0, "RPP Version", info_label_format);
     worksheet_write_string(info_sheet, row++, 1, getRPPVersion().c_str(), NULL);
+
+    worksheet_write_string(info_sheet, row, 0, "ROCm Version", info_label_format);
+    worksheet_write_string(info_sheet, row++, 1, getROCmVersion().c_str(), NULL);
 
     worksheet_write_string(info_sheet, row, 0, "OpenCV Version", info_label_format);
     worksheet_write_string(info_sheet, row++, 1, CV_VERSION, NULL);

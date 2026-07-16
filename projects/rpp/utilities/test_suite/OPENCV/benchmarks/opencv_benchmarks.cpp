@@ -419,7 +419,8 @@ void benchmark_OpenCV_WarpAffine(const vector<Mat>& imgs, bool isColor) {
     vector<Mat> out(num_images);
 
     // Match RPP affine matrix: [1.0, 0.1, 10.0, 0.1, 1.0, 10.0]
-    Mat affineMat = (Mat_<double>(2, 3) << 1.0, 0.1, 10.0, 0.1, 1.0, 10.0);
+    double affineData[] = {1.0, 0.1, 10.0, 0.1, 1.0, 10.0};
+    Mat affineMat(2, 3, CV_64F, affineData);
 
     auto start = high_resolution_clock::now();
     for (int k = 0; k < NUM_RUNS; ++k) {
@@ -702,7 +703,8 @@ void benchmark_OpenCV_WarpPerspective(const vector<Mat>& imgs, bool isColor) {
     vector<Mat> out(num_images);
 
     // Match RPP perspective matrix: [1.0, 0.1, 0.0, 0.1, 1.0, 0.0, 0.0, 0.0, 1.0]
-    Mat perspMat = (Mat_<double>(3, 3) << 1.0, 0.1, 0.0, 0.1, 1.0, 0.0, 0.0, 0.0, 1.0);
+    double perspData[] = {1.0, 0.1, 0.0, 0.1, 1.0, 0.0, 0.0, 0.0, 1.0};
+    Mat perspMat(3, 3, CV_64F, perspData);
 
     auto start = high_resolution_clock::now();
     for (int k = 0; k < NUM_RUNS; ++k) {
@@ -1611,14 +1613,17 @@ void benchmark_OpenCV_Emboss(const vector<Mat>& imgs, bool isColor, int kernelSi
     Mat kernel;
     if (kernelSize == 3) {
         // 3x3 emboss kernel
-        kernel = (Mat_<float>(3, 3) << -1, -1, 0, -1, 0, 1, 0, 1, 1);
+        float kernel3x3Data[] = {-1, -1, 0, -1, 0, 1, 0, 1, 1};
+        kernel = Mat(3, 3, CV_32F, kernel3x3Data).clone();
     } else if (kernelSize == 5) {
         // 5x5 emboss kernel
-        kernel = (Mat_<float>(5, 5) << -1, -1, -1, -1, 0, -1, -1, -1, 0, 1, -1, -1, 0, 1, 1, -1, 0,
-                  1, 1, 1, 0, 1, 1, 1, 1);
+        float kernel5x5Data[] = {-1, -1, -1, -1, 0, -1, -1, -1, 0, 1, -1, -1, 0, 1, 1, -1, 0,
+                                 1, 1, 1, 0, 1, 1, 1, 1};
+        kernel = Mat(5, 5, CV_32F, kernel5x5Data).clone();
     } else {
         // Default to 3x3
-        kernel = (Mat_<float>(3, 3) << -1, -1, 0, -1, 0, 1, 0, 1, 1);
+        float kernel3x3Data[] = {-1, -1, 0, -1, 0, 1, 0, 1, 1};
+        kernel = Mat(3, 3, CV_32F, kernel3x3Data).clone();
     }
 
     // Scale kernel by strength
@@ -1747,12 +1752,13 @@ void benchmark_OpenCV_LensCorrection(const vector<Mat>& imgs, bool isColor) {
     vector<Mat> out(num_images);
 
     // Camera matrix (3x3)
-    Mat cameraMatrix = (Mat_<double>(3, 3) << 534.07088364, 0.0, 341.53407554, 0.0, 534.11914595,
-                        232.94565259, 0.0, 0.0, 1.0);
+    double cameraData[] = {534.07088364, 0.0, 341.53407554, 0.0, 534.11914595,
+                           232.94565259, 0.0, 0.0, 1.0};
+    Mat cameraMatrix(3, 3, CV_64F, cameraData);
 
     // Distortion coefficients (k1, k2, p1, p2, k3)
-    Mat distCoeffs =
-        (Mat_<double>(5, 1) << -0.29297164, 0.10770696, 0.00131038, -0.0000311, 0.0434798);
+    double distData[] = {-0.29297164, 0.10770696, 0.00131038, -0.0000311, 0.0434798};
+    Mat distCoeffs(5, 1, CV_64F, distData);
 
     auto start = high_resolution_clock::now();
     for (int k = 0; k < NUM_RUNS; ++k) {

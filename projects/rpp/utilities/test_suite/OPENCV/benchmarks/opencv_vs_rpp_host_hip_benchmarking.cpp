@@ -205,6 +205,7 @@ int main(int argc, char* argv[]) {
     cout << "\n--- System Information ---" << endl;
     cout << "OpenCV Version: " << CV_VERSION << endl;
     cout << "RPP Version: " << getRPPVersion() << endl;
+    cout << "ROCm Version: " << getROCmVersion() << endl;
     cout << "\n--- Host Information ---" << endl;
     cout << "OS: " << getOSInfo() << endl;
     cout << "CPU: " << getCPUInfo() << endl;

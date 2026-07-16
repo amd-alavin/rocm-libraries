@@ -122,6 +122,7 @@ string getMemoryInfo();
 string getOSInfo();
 string getGPUInfo();
 string getRPPVersion();
+string getROCmVersion();
 string getCurrentDateTime();
 string getDtypeString(int cvType);
 bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& grayResults,

@@ -4,7 +4,7 @@ This directory contains a comprehensive benchmarking suite that compares the per
 
 ## Overview
 
-The `opencv_vs_rpp_host_benchmarking` performs side-by-side performance comparisons of 50+ image processing operations including:
+The `opencv_vs_rpp_host_hip_benchmarking` performs side-by-side performance comparisons of 50+ image processing operations including:
 - Color adjustments (brightness, contrast, gamma, exposure, hue, saturation)
 - Filtering operations (box, median, gaussian, sobel filters)
 - Image transformations (resize, crop, flip, rotate)
@@ -30,7 +30,7 @@ Each file contains:
 
 ```
 OPENCV/
-├── opencv_vs_rpp_host_benchmarking.cpp  # Main entry point and benchmark orchestration
+├── opencv_vs_rpp_host_hip_benchmarking.cpp  # Main entry point and benchmark orchestration
 ├── opencv_benchmarks.cpp                # OpenCV benchmark implementations
 ├── rpp_benchmarks.cpp                   # RPP benchmark implementations
 ├── benchmarks_common.h                  # Shared declarations and data structures
@@ -49,7 +49,7 @@ OPENCV/
 The benchmark suite is organized into modular files for better maintainability:
 
 **Core Files:**
-- `opencv_vs_rpp_host_benchmarking.cpp` - Main program that orchestrates benchmark execution
+- `opencv_vs_rpp_host_hip_benchmarking.cpp` - Main program that orchestrates benchmark execution
 - `benchmarks_common.h` - Shared header with data structures, constants, and function declarations
 
 **Implementation Files:**
@@ -156,18 +156,18 @@ make -j$(nproc)
 cd ..
 ```
 
-The executable will be created at `build/opencv_vs_rpp_host_benchmarking`
+The executable will be created at `build/opencv_vs_rpp_host_hip_benchmarking`
 
 #### Step 4: Run the Benchmark
 
 **Basic usage (auto-detect threads):**
 ```bash
-./build/opencv_vs_rpp_host_benchmarking
+./build/opencv_vs_rpp_host_hip_benchmarking
 ```
 
 **Command-line options:**
 ```bash
-./build/opencv_vs_rpp_host_benchmarking [OPTIONS]
+./build/opencv_vs_rpp_host_hip_benchmarking [OPTIONS]
 
 Options:
   -t, --threads <N>        Number of threads to use (default: auto-detect)
@@ -177,10 +177,10 @@ Options:
   -h, --help               Display help message
 
 Examples:
-  ./build/opencv_vs_rpp_host_benchmarking                           # Auto-detect threads, 100 runs (default)
-  ./build/opencv_vs_rpp_host_benchmarking --threads 64              # Use 64 threads
-  ./build/opencv_vs_rpp_host_benchmarking -t 32 -n 50               # Use 32 threads with 50 runs
-  ./build/opencv_vs_rpp_host_benchmarking -t 32 -g ./my_images/     # Use 32 threads with custom dataset
+  ./build/opencv_vs_rpp_host_hip_benchmarking                           # Auto-detect threads, 100 runs (default)
+  ./build/opencv_vs_rpp_host_hip_benchmarking --threads 64              # Use 64 threads
+  ./build/opencv_vs_rpp_host_hip_benchmarking -t 32 -n 50               # Use 32 threads with 50 runs
+  ./build/opencv_vs_rpp_host_hip_benchmarking -t 32 -g ./my_images/     # Use 32 threads with custom dataset
 ```
 
 **Thread Configuration:**
@@ -298,14 +298,14 @@ The benchmark automatically detects the maximum available threads on your system
 **Runtime configuration (recommended):**
 ```bash
 # Use all available threads (auto-detect) with default 100 runs
-./build/opencv_vs_rpp_host_benchmarking
+./build/opencv_vs_rpp_host_hip_benchmarking
 
 # Use specific thread count
-./build/opencv_vs_rpp_host_benchmarking --threads 64
-./build/opencv_vs_rpp_host_benchmarking -t 32
+./build/opencv_vs_rpp_host_hip_benchmarking --threads 64
+./build/opencv_vs_rpp_host_hip_benchmarking -t 32
 
 # Use specific thread count with custom number of runs
-./build/opencv_vs_rpp_host_benchmarking -t 32 -n 50
+./build/opencv_vs_rpp_host_hip_benchmarking -t 32 -n 50
 ```
 
 **Note:** Thread count configuration only applies when built with `ENABLE_PARALLEL_THREADS=ON`. When built with `ENABLE_PARALLEL_THREADS=OFF`, the benchmark always uses 1 thread regardless of command-line arguments.
@@ -317,14 +317,14 @@ You can configure the number of benchmark runs (iterations) at runtime using the
 **Runtime configuration (recommended):**
 ```bash
 # Default 100 runs
-./build/opencv_vs_rpp_host_benchmarking
+./build/opencv_vs_rpp_host_hip_benchmarking
 
 # Custom number of runs
-./build/opencv_vs_rpp_host_benchmarking --num-runs 50
-./build/opencv_vs_rpp_host_benchmarking -n 200
+./build/opencv_vs_rpp_host_hip_benchmarking --num-runs 50
+./build/opencv_vs_rpp_host_hip_benchmarking -n 200
 
 # Combine with thread count
-./build/opencv_vs_rpp_host_benchmarking -t 32 -n 50
+./build/opencv_vs_rpp_host_hip_benchmarking -t 32 -n 50
 ```
 
 **Alternative: Build-time configuration:**
@@ -363,10 +363,10 @@ The build system will automatically locate the RPP headers and libraries.
 **Option 1: Command-line arguments (recommended):**
 ```bash
 # Use custom dataset path for both grayscale and RGB
-./build/opencv_vs_rpp_host_benchmarking --gray-path ./my_images/ --rgb-path ./my_images/
+./build/opencv_vs_rpp_host_hip_benchmarking --gray-path ./my_images/ --rgb-path ./my_images/
 
 # Use different paths for grayscale and RGB
-./build/opencv_vs_rpp_host_benchmarking -g ./gray_imgs/ -r ./rgb_imgs/
+./build/opencv_vs_rpp_host_hip_benchmarking -g ./gray_imgs/ -r ./rgb_imgs/
 ```
 
 **Option 2: Replace default dataset:**
@@ -497,7 +497,7 @@ python3 generate_test_dataset.py
 - **Benchmark Iterations:**
   - Each operation runs 100 times by default for stable average timings
   - Adjustable at runtime via `-n` or `--num-runs` command-line option (no rebuild required)
-  - Example: `./build/opencv_vs_rpp_host_benchmarking -n 200` runs each benchmark 200 times
+  - Example: `./build/opencv_vs_rpp_host_hip_benchmarking -n 200` runs each benchmark 200 times
 
 - **Performance Variability:**
   - Results vary based on CPU architecture, memory bandwidth, and system load
