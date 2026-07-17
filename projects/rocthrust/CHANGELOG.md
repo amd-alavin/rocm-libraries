@@ -14,6 +14,11 @@ Documentation for rocThrust available at
 
 * CCCL 2.8.x compatibility is deprecated. hipCUB and rocThrust will be brought forward to CCCL 3.0.x compatibility in an upcoming version.
 
+### Changed
+
+* Benchmarking now uses primbench for its benchmarks instead of Google Benchmark.
+  * See `shared/primbench/README.md` for its documentation.
+
 ## Since last release ROCm 7.12
 
 ### Resolved issues
