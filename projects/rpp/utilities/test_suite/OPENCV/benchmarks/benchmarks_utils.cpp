@@ -391,7 +391,7 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
     format_set_bold(info_label_format);
 
     lxw_format* speedup_format = workbook_add_format(workbook);
-    format_set_num_format(speedup_format, "0.00\"x\"");
+    format_set_num_format(speedup_format, "0.00");
 
     lxw_format* time_format = workbook_add_format(workbook);
     format_set_num_format(time_format, "0.00");
