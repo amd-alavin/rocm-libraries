@@ -8,15 +8,19 @@ option(BUILD_CPP_GRAPH_TESTS
 target_sources(${INTEGRATION_TESTS_EXE}
     PRIVATE
         IntegrationIsSupportedExtPerformance.cpp
+        batchnorm/IntegrationGoldenRefBatchnormFwdInference.cpp
+        conv/IntegrationConvForwardSerializeRoundTrip.cpp
+        sdpa/IntegrationGoldenRefSdpaFwdInference.cpp
 )
 
-add_subdirectory(batchnorm)
-add_subdirectory(conv)
+# Matmul has not been migrated to bundles yet.
 add_subdirectory(matmul)
-add_subdirectory(sdpa)
 
 if(BUILD_CPP_GRAPH_TESTS)
+    add_subdirectory(batchnorm)
+    add_subdirectory(conv)
     add_subdirectory(reduction)
     add_subdirectory(rmsnorm)
+    add_subdirectory(sdpa)
     add_subdirectory(pointwise)
 endif()
