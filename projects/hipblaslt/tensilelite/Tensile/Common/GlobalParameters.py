@@ -393,6 +393,10 @@ globalParameters["StinkyTofuPassOrderSnapshotJson"] = ""
 # splits, and how many s_nop cycles were wasted.
 globalParameters["StinkyTofuEnableRemarks"] = False
 
+# Epilogue store-sink experiment (gfx1250): sink global-write buffer_stores as
+# late as legal so InsertWaitAlu emits graduated va_vdst(N) instead of va_vdst(0).
+globalParameters["StinkyTofuEnableEpilogueSink"] = False
+
 globalParameters["DisableSTWaitCnt"] = True
 
 # Internal plumbing for the --cpu-only CLI switch (see Tensile.py addCommonArguments).
@@ -554,7 +558,7 @@ defaultBenchmarkCommonParameters = [
     {"NonVolatileMXSB": [0]},
     {"NonVolatileWS": [0]},
     {"NonVolatileMetadata": [0]},
-    {"PreloadKernArgs": [True]},
+    {"PreloadKernArgs": [False]},
     {"CustomKernelName": [""]},
     {"NoReject": [False]},
     {"StoreRemapVectorWidth": [0]},
