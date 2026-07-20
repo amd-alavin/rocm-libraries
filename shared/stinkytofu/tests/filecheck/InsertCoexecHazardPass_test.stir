@@ -1,0 +1,215 @@
+# RUN: %stinkytofu-opt --arch gfx1250 %s --InsertCoexecHazardPass --print-output
+#
+# InsertCoexecHazardPass (gfx1250): insert V_NOPs for multicycle co-execution
+# data hazards. WMMA slot count comes from the producer's coIssueWindow popcount
+# (base WMMA fmt 0x00F0 -> 4): WMMA->WMMA = 5, WMMA->VALU = 4 when co-exec is ON.
+# When the DISABLE_XDL_ARB_STALL setreg (hwreg(26,4,1)=1) has executed, co-exec
+# is OFF and the reduced counts apply: WMMA->WMMA = 1, WMMA->VALU = 0. TRANS
+# hazards are always 1 (TRANS->TRANS, TRANS->XDL WMMA); TRANS->core/side is 0.
+# Pre-existing VALU/v_nop between producer and consumer are counted and subtracted.
+#
+# On gfx1250 WMMA D/A/B/C are all VGPRs. Operand order is (A=src0, B=src1,
+# C=src2, D=dst). A hazard needs the producer's D range to overlap the
+# consumer's A/B (WMMA->WMMA) or any src/dst (WMMA->VALU); D overlapping only
+# the consumer's C is accumulation forwarding and is NOT a hazard.
+
+#===----------------------------------------------------------------------===#
+# Mode ON (no arb-stall setreg)
+#===----------------------------------------------------------------------===#
+
+#--- WMMA -> WMMA, prev D (v[0:7]) feeds next A (v[0:7]): 5 v_nops (4+1).
+# CHECK-LABEL: @wmma_to_wmma_on
+# CHECK: v_wmma_f32_16x16x32_bf16
+# CHECK: v_nop
+# CHECK-NEXT: v_nop
+# CHECK-NEXT: v_nop
+# CHECK-NEXT: v_nop
+# CHECK-NEXT: v_nop
+# CHECK-NEXT: v_wmma_f32_16x16x32_bf16
+st.func @wmma_to_wmma_on() {
+^entry:
+  v[0:7] = "st.v_wmma_f32_16x16x32_bf16"(v[20:27], v[30:37], v[0:7]) { mod.mfma = { reuseA = false, reuseB = false } }
+  v[40:47] = "st.v_wmma_f32_16x16x32_bf16"(v[0:7], v[8:15], v[40:47]) { mod.mfma = { reuseA = false, reuseB = false } }
+  "st.s_endpgm"() { issueCycles = 1, latencyCycles = 1 }
+}
+
+#--- WMMA -> co-executable VALU, prev D (v[0:7]) feeds VALU src (v0): 4 v_nops.
+# CHECK-LABEL: @wmma_to_valu_on
+# CHECK: v_wmma_f32_16x16x32_bf16
+# CHECK: v_nop
+# CHECK-NEXT: v_nop
+# CHECK-NEXT: v_nop
+# CHECK-NEXT: v_nop
+# CHECK-NEXT: v_add_f32
+st.func @wmma_to_valu_on() {
+^entry:
+  v[0:7] = "st.v_wmma_f32_16x16x32_bf16"(v[20:27], v[30:37], v[0:7]) { mod.mfma = { reuseA = false, reuseB = false } }
+  v100 = "st.v_add_f32"(v0, v101) { issueCycles = 1, latencyCycles = 5 }
+  "st.s_endpgm"() { issueCycles = 1, latencyCycles = 1 }
+}
+
+#--- WMMA -> WMMA, prev D (v[0:7]) feeds next C=src2 only (accumulation): the
+#--- pass skips D->C, so no hazard even though A/B (v[50:57],v[60:67]) differ.
+# CHECK-LABEL: @wmma_to_wmma_accum_no_hazard
+# CHECK: v_wmma_f32_16x16x32_bf16
+# CHECK-NEXT: v_wmma_f32_16x16x32_bf16
+# CHECK-NOT: v_nop
+st.func @wmma_to_wmma_accum_no_hazard() {
+^entry:
+  v[0:7] = "st.v_wmma_f32_16x16x32_bf16"(v[20:27], v[30:37], v[0:7]) { mod.mfma = { reuseA = false, reuseB = false } }
+  v[0:7] = "st.v_wmma_f32_16x16x32_bf16"(v[50:57], v[60:67], v[0:7]) { mod.mfma = { reuseA = false, reuseB = false } }
+  "st.s_endpgm"() { issueCycles = 1, latencyCycles = 1 }
+}
+
+#--- No register overlap: no hazard.
+# CHECK-LABEL: @wmma_no_overlap
+# CHECK: v_wmma_f32_16x16x32_bf16
+# CHECK-NEXT: v_add_f32
+# CHECK-NOT: v_nop
+st.func @wmma_no_overlap() {
+^entry:
+  v[0:7] = "st.v_wmma_f32_16x16x32_bf16"(v[20:27], v[30:37], v[0:7]) { mod.mfma = { reuseA = false, reuseB = false } }
+  v100 = "st.v_add_f32"(v200, v201) { issueCycles = 1, latencyCycles = 5 }
+  "st.s_endpgm"() { issueCycles = 1, latencyCycles = 1 }
+}
+
+#--- Existing VALU subtraction: 2 v_add between WMMA and consumer WMMA.
+#--- Need 5, already 2 slot-fillers -> insert 3.
+# CHECK-LABEL: @wmma_to_wmma_existing_subtract
+# CHECK: v_wmma_f32_16x16x32_bf16
+# CHECK: v_add_f32
+# CHECK-NEXT: v_add_f32
+# CHECK-NEXT: v_nop
+# CHECK-NEXT: v_nop
+# CHECK-NEXT: v_nop
+# CHECK-NEXT: v_wmma_f32_16x16x32_bf16
+st.func @wmma_to_wmma_existing_subtract() {
+^entry:
+  v[0:7] = "st.v_wmma_f32_16x16x32_bf16"(v[20:27], v[30:37], v[0:7]) { mod.mfma = { reuseA = false, reuseB = false } }
+  v100 = "st.v_add_f32"(v200, v201) { issueCycles = 1, latencyCycles = 5 }
+  v102 = "st.v_add_f32"(v202, v203) { issueCycles = 1, latencyCycles = 5 }
+  v[40:47] = "st.v_wmma_f32_16x16x32_bf16"(v[0:7], v[8:15], v[40:47]) { mod.mfma = { reuseA = false, reuseB = false } }
+  "st.s_endpgm"() { issueCycles = 1, latencyCycles = 1 }
+}
+
+#===----------------------------------------------------------------------===#
+# Mode OFF (DISABLE_XDL_ARB_STALL setreg executed)
+#===----------------------------------------------------------------------===#
+
+#--- WMMA -> WMMA D->A/B with co-exec OFF: exactly 1 v_nop.
+# CHECK-LABEL: @wmma_to_wmma_off
+# CHECK: s_setreg_IMM32_b32
+# CHECK: v_wmma_f32_16x16x32_bf16
+# CHECK: v_nop
+# CHECK-NEXT: v_wmma_f32_16x16x32_bf16
+st.func @wmma_to_wmma_off() {
+^entry:
+  hwreg(26,4,1) = "st.s_setreg_IMM32_b32"(1)
+  v[0:7] = "st.v_wmma_f32_16x16x32_bf16"(v[20:27], v[30:37], v[0:7]) { mod.mfma = { reuseA = false, reuseB = false } }
+  v[40:47] = "st.v_wmma_f32_16x16x32_bf16"(v[0:7], v[8:15], v[40:47]) { mod.mfma = { reuseA = false, reuseB = false } }
+  "st.s_endpgm"() { issueCycles = 1, latencyCycles = 1 }
+}
+
+#--- WMMA -> VALU with co-exec OFF: 0 v_nops (HW handles the reduced window).
+# CHECK-LABEL: @wmma_to_valu_off
+# CHECK: s_setreg_IMM32_b32
+# CHECK: v_wmma_f32_16x16x32_bf16
+# CHECK-NEXT: v_add_f32
+# CHECK-NOT: v_nop
+st.func @wmma_to_valu_off() {
+^entry:
+  hwreg(26,4,1) = "st.s_setreg_IMM32_b32"(1)
+  v[0:7] = "st.v_wmma_f32_16x16x32_bf16"(v[20:27], v[30:37], v[0:7]) { mod.mfma = { reuseA = false, reuseB = false } }
+  v100 = "st.v_add_f32"(v0, v101) { issueCycles = 1, latencyCycles = 5 }
+  "st.s_endpgm"() { issueCycles = 1, latencyCycles = 1 }
+}
+
+#===----------------------------------------------------------------------===#
+# TRANS hazards (mode-independent)
+#===----------------------------------------------------------------------===#
+
+#--- TRANS -> TRANS with overlap (prev dst v0 feeds next src): 1 v_nop.
+# CHECK-LABEL: @trans_to_trans
+# CHECK: v_rcp_f32
+# CHECK: v_nop
+# CHECK-NEXT: v_rcp_f32
+st.func @trans_to_trans() {
+^entry:
+  v0 = "st.v_rcp_f32"(v10) { issueCycles = 1, latencyCycles = 5 }
+  v20 = "st.v_rcp_f32"(v0) { issueCycles = 1, latencyCycles = 5 }
+  "st.s_endpgm"() { issueCycles = 1, latencyCycles = 1 }
+}
+
+#--- TRANS -> XDL WMMA with overlap (prev trans dst v0 feeds WMMA A): 1 v_nop.
+# CHECK-LABEL: @trans_to_wmma
+# CHECK: v_rcp_f32
+# CHECK: v_nop
+# CHECK-NEXT: v_wmma_f32_16x16x32_bf16
+st.func @trans_to_wmma() {
+^entry:
+  v0 = "st.v_rcp_f32"(v10) { issueCycles = 1, latencyCycles = 5 }
+  v[40:47] = "st.v_wmma_f32_16x16x32_bf16"(v[0:7], v[8:15], v[40:47]) { mod.mfma = { reuseA = false, reuseB = false } }
+  "st.s_endpgm"() { issueCycles = 1, latencyCycles = 1 }
+}
+
+#--- TRANS -> core/side VALU: HW handles it, no v_nop.
+# CHECK-LABEL: @trans_to_coreside
+# CHECK: v_rcp_f32
+# CHECK-NEXT: v_add_f32
+# CHECK-NOT: v_nop
+st.func @trans_to_coreside() {
+^entry:
+  v0 = "st.v_rcp_f32"(v10) { issueCycles = 1, latencyCycles = 5 }
+  v20 = "st.v_add_f32"(v0, v21) { issueCycles = 1, latencyCycles = 5 }
+  "st.s_endpgm"() { issueCycles = 1, latencyCycles = 1 }
+}
+
+#===----------------------------------------------------------------------===#
+# Cross-BB window and loop backedge
+#===----------------------------------------------------------------------===#
+
+#--- Cross-BB forward: WMMA in ^entry, consumer WMMA in ^next reachable via the
+#--- branch edge. Prev D (v[0:7]) feeds next A (v[0:7]); co-exec ON -> 5.
+# CHECK-LABEL: @wmma_cross_bb_forward
+# CHECK: v_wmma_f32_16x16x32_bf16
+# CHECK: v_nop
+# CHECK-NEXT: v_nop
+# CHECK-NEXT: v_nop
+# CHECK-NEXT: v_nop
+# CHECK-NEXT: v_nop
+# CHECK-NEXT: v_wmma_f32_16x16x32_bf16
+st.func @wmma_cross_bb_forward() {
+^entry:
+  v[0:7] = "st.v_wmma_f32_16x16x32_bf16"(v[20:27], v[30:37], v[0:7]) { mod.mfma = { reuseA = false, reuseB = false } }
+  "st.s_branch"("next")
+  Successors: ^next
+^next:
+  v[40:47] = "st.v_wmma_f32_16x16x32_bf16"(v[0:7], v[8:15], v[40:47]) { mod.mfma = { reuseA = false, reuseB = false } }
+  "st.s_endpgm"() { issueCycles = 1, latencyCycles = 1 }
+}
+
+#--- Loop backedge: the WMMA at the top of ^loop consumes v[40:47] as its A;
+#--- the WMMA at the bottom of ^loop produces v[40:47] as its D. The producer
+#--- is only reachable from the consumer across the ^loop -> ^loop backedge, so
+#--- the pass must follow the predecessor edge to find it. co-exec ON -> 5 v_nops
+#--- before the top WMMA. (The bottom WMMA has no producer feeding its A/B, so it
+#--- gets 0 — only the top WMMA is padded.)
+# CHECK-LABEL: @wmma_loop_backedge
+# CHECK: v_nop
+# CHECK-NEXT: v_nop
+# CHECK-NEXT: v_nop
+# CHECK-NEXT: v_nop
+# CHECK-NEXT: v_nop
+# CHECK-NEXT: v_wmma_f32_16x16x32_bf16
+st.func @wmma_loop_backedge() {
+^entry:
+  "st.s_branch"("loop")
+  Successors: ^loop
+^loop:
+  v[0:7] = "st.v_wmma_f32_16x16x32_bf16"(v[40:47], v[100:107], v[0:7]) { mod.mfma = { reuseA = false, reuseB = false } }
+  v[40:47] = "st.v_wmma_f32_16x16x32_bf16"(v[50:57], v[60:67], v[40:47]) { mod.mfma = { reuseA = false, reuseB = false } }
+  "st.s_cbranch_scc1"("loop", SCC0)
+  Successors: ^loop, ^exit
+^exit:
+  "st.s_endpgm"() { issueCycles = 1, latencyCycles = 1 }
+}
