@@ -150,80 +150,117 @@ if(HIPSPARSELT_ENABLE_CUDA)
 endif()
 
 if(HIPSPARSELT_ENABLE_HIP)
-    find_package(hipblaslt CONFIG REQUIRED)
+    if(HIPSPARSELT_ENABLE_THEROCK)
+        find_package(hipblaslt CONFIG REQUIRED)
 
-    if(NOT TARGET roc::tensilelite-host)
-        message(FATAL_ERROR
-            "The hipBLASLt package found at '${hipblaslt_DIR}' does not export "
-            "roc::tensilelite-host, which hipSPARSELt links (see "
-            "library/src/hcc_detail/rocsparselt/CMakeLists.txt). Rebuild hipBLASLt with "
-            "-DTENSILELITE_ENABLE_HOST=ON and -DTENSILELITE_BUILD_SHARED_LIBS=ON so the "
-            "shared tensilelite-host library is installed and exported.")
-    endif()
-
-    set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.md"
-        CACHE FILEPATH "License file for package" FORCE
-    )
-
-    if(HIPSPARSELT_ENABLE_DEVICE)
-        # hipSPARSELt ships its own sparse Tensile logic and generates its device
-        # libraries (.co/.dat) by calling hipBLASLt's exported
-        # hipblaslt_create_device_library() against the binary hipBLASLt package,
-        # instead of add_subdirectory(hipblaslt).
-        #
-        # The Tensile codegen Python lives in the hipBLASLt source tree (same repo,
-        # deliberately not installed); the compiled rocisa extension IS installed
-        # with hipBLASLt (lib/hipblaslt/rocisa), so its directory is derived from
-        # the imported roc::tensilelite-host target's location.
-        if(NOT HIPBLASLT_TENSILELITE_PATH)
-            set(HIPBLASLT_TENSILELITE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../hipblaslt/tensilelite")
-        endif()
-        if(NOT EXISTS "${HIPBLASLT_TENSILELITE_PATH}/Tensile/bin/TensileLogic")
+        if(NOT TARGET roc::tensilelite-host)
             message(FATAL_ERROR
-                "hipSPARSELt device codegen needs the hipBLASLt tensilelite source at "
-                "'${HIPBLASLT_TENSILELITE_PATH}'; set -DHIPBLASLT_TENSILELITE_PATH.")
+                "The hipBLASLt package found at '${hipblaslt_DIR}' does not export "
+                "roc::tensilelite-host, which hipSPARSELt links (see "
+                "library/src/hcc_detail/rocsparselt/CMakeLists.txt). Rebuild hipBLASLt with "
+                "-DTENSILELITE_ENABLE_HOST=ON and -DTENSILELITE_BUILD_SHARED_LIBS=ON so the "
+                "shared tensilelite-host library is installed and exported.")
         endif()
-        set(HIPBLASLT_CODEGEN_ROOT "${HIPBLASLT_TENSILELITE_PATH}")
 
-        # The installed _rocisa extension has DT_NEEDED on liborigami (linked
-        # PUBLIC) and libstinkytofu; its INSTALL_RPATH ($ORIGIN) only covers the
-        # vendored stinkytofu beside it. Since the super-project resolves each
-        # dependency from its own dist dir (not one merged prefix), an RPATH cannot
-        # span them, so put origami's and rocisa's dirs on LD_LIBRARY_PATH for the
-        # codegen subprocess. libamdhip64 is already resolvable from the build env.
-        find_package(origami CONFIG REQUIRED)
-        find_package(hip REQUIRED)
-
-        find_package(Python3 COMPONENTS Interpreter REQUIRED)
-        set(_hipsparselt_rocisa_dir "$<TARGET_FILE_DIR:roc::tensilelite-host>/hipblaslt/rocisa")
-        # Tensile's toolchain validator resolves hipconfig (and clang) from PATH;
-        # provide the hip runtime bin dir and the compiler dir so the codegen
-        # subprocess finds them (mirrors hipBLASLt's own bundled-python PATH).
-        get_filename_component(_hipsparselt_hip_bindir "${hip_DIR}/../../../bin" ABSOLUTE)
-        get_filename_component(_hipsparselt_cxx_bindir "${CMAKE_CXX_COMPILER}" DIRECTORY)
-
-        set(_hipsparselt_tensile_out "${CMAKE_BINARY_DIR}/Tensile")
-        set(_hipsparselt_codegen_flags "")
-        if(HIPSPARSELT_ENABLE_ASAN)
-            list(APPEND _hipsparselt_codegen_flags ASAN)
-        endif()
-        hipblaslt_create_device_library(
-            TARGET tensilelite-device-libraries
-            LOGIC_PATH "${CMAKE_CURRENT_SOURCE_DIR}/library/src/hcc_detail/rocsparselt/src/spmm/Tensile/Logic/asm_full"
-            OUTPUT_DIR "${_hipsparselt_tensile_out}"
-            ARCHES ${GPU_TARGETS}
-            CXX_COMPILER "${CMAKE_CXX_COMPILER}"
-            PYTHONPATH_EXTRA "$<TARGET_FILE_DIR:roc::tensilelite-host>/hipblaslt" "${HIPBLASLT_CODEGEN_ROOT}"
-            RUNTIME_LIB_DIRS "$<TARGET_FILE_DIR:roc::origami>" "${_hipsparselt_rocisa_dir}"
-            TOOL_BIN_DIRS "${_hipsparselt_hip_bindir}" "${_hipsparselt_cxx_bindir}"
-            ${_hipsparselt_codegen_flags}
+        set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.md"
+            CACHE FILEPATH "License file for package" FORCE
         )
 
-        install(
-            DIRECTORY "${_hipsparselt_tensile_out}/library"
-            DESTINATION "${CMAKE_INSTALL_LIBDIR}/hipsparselt"
-            COMPONENT runtime
+        if(HIPSPARSELT_ENABLE_DEVICE)
+            # hipSPARSELt ships its own sparse Tensile logic and generates its device
+            # libraries (.co/.dat) by calling hipBLASLt's exported
+            # hipblaslt_create_device_library() against the binary hipBLASLt package,
+            # instead of add_subdirectory(hipblaslt).
+            #
+            # The Tensile codegen Python lives in the hipBLASLt source tree (same repo,
+            # deliberately not installed); the compiled rocisa extension IS installed
+            # with hipBLASLt (lib/hipblaslt/rocisa), so its directory is derived from
+            # the imported roc::tensilelite-host target's location.
+            if(NOT HIPBLASLT_TENSILELITE_PATH)
+                set(HIPBLASLT_TENSILELITE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../hipblaslt/tensilelite")
+            endif()
+            if(NOT EXISTS "${HIPBLASLT_TENSILELITE_PATH}/Tensile/bin/TensileLogic")
+                message(FATAL_ERROR
+                    "hipSPARSELt device codegen needs the hipBLASLt tensilelite source at "
+                    "'${HIPBLASLT_TENSILELITE_PATH}'; set -DHIPBLASLT_TENSILELITE_PATH.")
+            endif()
+            set(HIPBLASLT_CODEGEN_ROOT "${HIPBLASLT_TENSILELITE_PATH}")
+
+            # The installed _rocisa extension has DT_NEEDED on liborigami (linked
+            # PUBLIC) and libstinkytofu; its INSTALL_RPATH ($ORIGIN) only covers the
+            # vendored stinkytofu beside it. Since the super-project resolves each
+            # dependency from its own dist dir (not one merged prefix), an RPATH cannot
+            # span them, so put origami's and rocisa's dirs on LD_LIBRARY_PATH for the
+            # codegen subprocess. libamdhip64 is already resolvable from the build env.
+            find_package(origami CONFIG REQUIRED)
+            find_package(hip REQUIRED)
+
+            find_package(Python3 COMPONENTS Interpreter REQUIRED)
+            set(_hipsparselt_rocisa_dir "$<TARGET_FILE_DIR:roc::tensilelite-host>/hipblaslt/rocisa")
+            # Tensile's toolchain validator resolves hipconfig (and clang) from PATH;
+            # provide the hip runtime bin dir and the compiler dir so the codegen
+            # subprocess finds them (mirrors hipBLASLt's own bundled-python PATH).
+            get_filename_component(_hipsparselt_hip_bindir "${hip_DIR}/../../../bin" ABSOLUTE)
+            get_filename_component(_hipsparselt_cxx_bindir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+
+            set(_hipsparselt_tensile_out "${CMAKE_BINARY_DIR}/Tensile")
+            set(_hipsparselt_codegen_flags "")
+            if(HIPSPARSELT_ENABLE_ASAN)
+                list(APPEND _hipsparselt_codegen_flags ASAN)
+            endif()
+            hipblaslt_create_device_library(
+                TARGET tensilelite-device-libraries
+                LOGIC_PATH "${CMAKE_CURRENT_SOURCE_DIR}/library/src/hcc_detail/rocsparselt/src/spmm/Tensile/Logic/asm_full"
+                OUTPUT_DIR "${_hipsparselt_tensile_out}"
+                ARCHES ${GPU_TARGETS}
+                CXX_COMPILER "${CMAKE_CXX_COMPILER}"
+                PYTHONPATH_EXTRA "$<TARGET_FILE_DIR:roc::tensilelite-host>/hipblaslt" "${HIPBLASLT_CODEGEN_ROOT}"
+                RUNTIME_LIB_DIRS "$<TARGET_FILE_DIR:roc::origami>" "${_hipsparselt_rocisa_dir}"
+                TOOL_BIN_DIRS "${_hipsparselt_hip_bindir}" "${_hipsparselt_cxx_bindir}"
+                ${_hipsparselt_codegen_flags}
+            )
+
+            install(
+                DIRECTORY "${_hipsparselt_tensile_out}/library"
+                DESTINATION "${CMAKE_INSTALL_LIBDIR}/hipsparselt"
+                COMPONENT runtime
+            )
+        endif()
+    else()
+        set(HIPBLASLT_PATH "${HIPSPARSELT_HIPBLASLT_PATH}")
+        if(NOT EXISTS "${HIPBLASLT_PATH}")
+            message(FATAL_ERROR "hipBLASLt required but not found at ${HIPBLASLT_PATH}.")
+        endif()
+
+        block(SCOPE_FOR VARIABLES)
+        set(HIPBLASLT_ENABLE_HOST OFF CACHE BOOL "" FORCE)
+        set(HIPBLASLT_ENABLE_CLIENT OFF CACHE BOOL "" FORCE)
+        set(HIPBLASLT_ENABLE_DEVICE ${HIPSPARSELT_ENABLE_DEVICE} CACHE BOOL "" FORCE)
+        set(TENSILELITE_ENABLE_HOST ON CACHE BOOL "" FORCE)
+        set(TENSILELITE_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+        set(HIPBLASLT_ENABLE_ASAN ${HIPSPARSELT_ENABLE_ASAN} CACHE BOOL "" FORCE)
+        set(HIPBLASLT_DEVICE_LIBRARY_PATH "${CMAKE_BINARY_DIR}/Tensile" CACHE PATH "" FORCE)
+        set(HIPBLASLT_ENABLE_EXTOPS OFF CACHE BOOL "" FORCE)
+        set(HIPBLASLT_ENABLE_MATRIX_TRANSFORM OFF CACHE BOOL "" FORCE)
+        set(HIPBLASLT_LIBLOGIC_PATH
+            "${CMAKE_CURRENT_SOURCE_DIR}/library/src/hcc_detail/rocsparselt/src/spmm/Tensile/Logic/asm_full"
+            CACHE STRING "" FORCE
         )
+        set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.md"
+            CACHE FILEPATH "License file for package" FORCE
+        )
+        if(WIN32)
+            set(HIPBLASLT_TENSILE_LIBRARY_DIR "\${CPACK_PACKAGING_INSTALL_PREFIX}hipsparselt/bin"
+                CACHE PATH "path to tensile library" FORCE
+            )
+        else()
+            set(HIPBLASLT_TENSILE_LIBRARY_DIR
+                "\${CPACK_PACKAGING_INSTALL_PREFIX}${CMAKE_INSTALL_LIBDIR}/hipsparselt"
+                CACHE PATH "path to tensile library" FORCE
+            )
+        endif()
+        add_subdirectory("${HIPBLASLT_PATH}" hipblaslt)
+        endblock()
     endif()
 endif()
 
