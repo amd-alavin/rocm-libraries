@@ -5,7 +5,6 @@
 
 #include "compilation/IKernelCompiler.hpp"
 #include "compilation/KernelCompileOptions.hpp"
-#include "core/Utils.hpp"
 #include "engines/hip_mlops_engine/plans/PlanUtils.hpp"
 #include "engines/hip_mlops_engine/plans/layernorm/LayernormUtilities.hpp"
 #include "hip_kernel_provider_common/HipDeviceUtils.hpp"
@@ -18,8 +17,6 @@
 #include <hipdnn_flatbuffers_sdk/utilities/FlatbufferUtils.hpp>
 #include <hipdnn_plugin_sdk/PluginApiDataTypes.h>
 #include <hipdnn_plugin_sdk/PluginException.hpp>
-
-using namespace hip_kernel_provider::core::utils;
 
 namespace hip_kernel_provider::layernorm
 {
@@ -263,19 +260,27 @@ void LayernormBwdPlan::execute(const Handle& handle,
     }
 
     // Get device buffer pointers
-    auto dyBuffer = findDeviceBuffer(_params.dy()->uid(), deviceBuffers, numDeviceBuffers);
-    auto xBuffer = findDeviceBuffer(_params.x()->uid(), deviceBuffers, numDeviceBuffers);
-    auto scaleBuffer = findDeviceBuffer(_params.scale()->uid(), deviceBuffers, numDeviceBuffers);
+    auto dyBuffer
+        = hipdnn_plugin_sdk::findDeviceBuffer(_params.dy()->uid(), deviceBuffers, numDeviceBuffers);
+    auto xBuffer
+        = hipdnn_plugin_sdk::findDeviceBuffer(_params.x()->uid(), deviceBuffers, numDeviceBuffers);
+    auto scaleBuffer = hipdnn_plugin_sdk::findDeviceBuffer(
+        _params.scale()->uid(), deviceBuffers, numDeviceBuffers);
     auto meanBuffer = _params.mean() != nullptr
-                          ? findDeviceBuffer(_params.mean()->uid(), deviceBuffers, numDeviceBuffers)
+                          ? hipdnn_plugin_sdk::findDeviceBuffer(
+                                _params.mean()->uid(), deviceBuffers, numDeviceBuffers)
                           : hipdnnPluginDeviceBuffer_t{-1, nullptr};
-    auto invVarianceBuffer
-        = _params.invVariance() != nullptr
-              ? findDeviceBuffer(_params.invVariance()->uid(), deviceBuffers, numDeviceBuffers)
-              : hipdnnPluginDeviceBuffer_t{-1, nullptr};
-    auto dxBuffer = findDeviceBuffer(_params.dx()->uid(), deviceBuffers, numDeviceBuffers);
-    auto dscaleBuffer = findDeviceBuffer(_params.dscale()->uid(), deviceBuffers, numDeviceBuffers);
-    auto dbiasBuffer = findDeviceBuffer(_params.dbias()->uid(), deviceBuffers, numDeviceBuffers);
+    auto invVarianceBuffer = _params.invVariance() != nullptr
+                                 ? hipdnn_plugin_sdk::findDeviceBuffer(_params.invVariance()->uid(),
+                                                                       deviceBuffers,
+                                                                       numDeviceBuffers)
+                                 : hipdnnPluginDeviceBuffer_t{-1, nullptr};
+    auto dxBuffer
+        = hipdnn_plugin_sdk::findDeviceBuffer(_params.dx()->uid(), deviceBuffers, numDeviceBuffers);
+    auto dscaleBuffer = hipdnn_plugin_sdk::findDeviceBuffer(
+        _params.dscale()->uid(), deviceBuffers, numDeviceBuffers);
+    auto dbiasBuffer = hipdnn_plugin_sdk::findDeviceBuffer(
+        _params.dbias()->uid(), deviceBuffers, numDeviceBuffers);
 
     double epsilon = hipdnn_data_sdk::utilities::LAYERNORM_DEFAULT_EPSILON;
     if(_params.epsilon() != nullptr)
