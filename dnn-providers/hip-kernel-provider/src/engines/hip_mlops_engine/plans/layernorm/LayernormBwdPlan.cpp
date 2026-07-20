@@ -104,16 +104,16 @@ LayernormBwdPlan::LayernormBwdPlan(LayernormBwdParams&& params)
 
     const size_t normalizedDim
         = layernorm::guessNormalizedDim(_params.x(), _params.scale(), _params.mean());
-    long outerSize = 1;
-    long innerSize = 1;
-    long stride = 1;
+    int64_t outerSize = 1;
+    int64_t innerSize = 1;
+    int64_t stride = 1;
     const auto layoutNHWC = hipdnn_data_sdk::utilities::TensorLayout::NHWC;
     const auto layoutNDHWC = hipdnn_data_sdk::utilities::TensorLayout::NDHWC;
 
     if(normalizedDim > 1
        && (strideOrder == layoutNHWC.strideOrder || strideOrder == layoutNDHWC.strideOrder))
     {
-        stride = static_cast<long>(xDims->Get(1));
+        stride = static_cast<int64_t>(xDims->Get(1));
     }
 
     for(unsigned int i = 0; i < xDims->size(); ++i)
@@ -122,12 +122,12 @@ LayernormBwdPlan::LayernormBwdPlan(LayernormBwdParams&& params)
         {
             if(stride == 1 || i != 1) // Don't add C to outerSize if there is a stride
             {
-                outerSize *= static_cast<long>(xDims->Get(i));
+                outerSize *= static_cast<int64_t>(xDims->Get(i));
             }
         }
         else
         {
-            innerSize *= static_cast<long>(xDims->Get(i));
+            innerSize *= static_cast<int64_t>(xDims->Get(i));
         }
     }
 
@@ -175,7 +175,13 @@ void LayernormBwdPlan::compile(const IKernelCompiler& kernelCompiler,
     const std::string scaleBiasTypeString = getKernelParamTypeString(scaleBiasDataType);
     const std::string meanInvVarianceTypeString = getKernelParamTypeString(meanInvVarianceDataType);
 
-    const long gridSize = _outerSize * _stride;
+    const int64_t gridSize = _outerSize * _stride;
+    if(gridSize >= UINT32_MAX)
+    {
+        throw hipdnn_plugin_sdk::HipdnnPluginException(HIPDNN_PLUGIN_STATUS_BAD_PARAM,
+                                                       "Unsupported number of workgroups: "
+                                                           + std::to_string(gridSize));
+    }
 
     _isParallel = isParallel(deviceProperties,
                              static_cast<size_t>(_localSize),
@@ -271,10 +277,14 @@ void LayernormBwdPlan::execute(const Handle& handle,
     auto dscaleBuffer = findDeviceBuffer(_params.dscale()->uid(), deviceBuffers, numDeviceBuffers);
     auto dbiasBuffer = findDeviceBuffer(_params.dbias()->uid(), deviceBuffers, numDeviceBuffers);
 
-    hipdnn_flatbuffers_sdk::data_objects::TensorAttributesT epsilonTensor;
-    _params.epsilon()->UnPackTo(&epsilonTensor);
-    double epsilon
-        = hipdnn_flatbuffers_sdk::utilities::extractDoubleFromTensorValue(epsilonTensor, "Epsilon");
+    double epsilon = hipdnn_data_sdk::utilities::LAYERNORM_DEFAULT_EPSILON;
+    if(_params.epsilon() != nullptr)
+    {
+        hipdnn_flatbuffers_sdk::data_objects::TensorAttributesT epsilonTensor;
+        _params.epsilon()->UnPackTo(&epsilonTensor);
+        epsilon = hipdnn_flatbuffers_sdk::utilities::extractDoubleFromTensorValue(epsilonTensor,
+                                                                                  "Epsilon");
+    }
 
     // Launch kernels
     _runnableKernels[0]->launch(handle.getStream(),

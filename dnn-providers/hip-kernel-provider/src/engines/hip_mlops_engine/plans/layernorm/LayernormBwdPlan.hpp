@@ -81,7 +81,7 @@ public:
 
 private:
     LayernormBwdParams _params;
-    long _innerSize, _outerSize, _stride, _localSize;
+    int64_t _innerSize, _outerSize, _stride, _localSize;
     static size_t getReqdWorkItemCount(const hipDeviceProp_t& deviceProperties, size_t localSize);
     static bool isParallel(const hipDeviceProp_t& deviceProperties,
                            size_t localSize,
