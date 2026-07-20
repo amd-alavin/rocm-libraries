@@ -74,7 +74,7 @@ option(HIPBLASLT_INSTALL_TENSILELITE_TEST_ARTIFACTS
        "Install TensileLite Python packages and test tools into the test artifact tree."
        OFF)
 option(HIPBLASLT_INSTALL_ROCISA
-       "Install the rocisa Python extension with hipBLASLt so downstream consumers (e.g. hipSPARSELt) can import it to run device-library codegen against the staged hipBLASLt package."
+       "Install the rocisa Python extension with hipBLASLt so downstream consumers (e.g. hipSPARSELt) can import it to run device-library codegen against the staged hipBLASLt package. Requires HIPBLASLT_BUNDLE_PYTHON_DEPS=ON, which is what builds the extension."
        ${HIPBLASLT_ENABLE_HOST})
 option(TENSILELITE_ENABLE_AUTOBUILD "Generate scripts for wrapping tensile python scripts" OFF)
 
@@ -338,6 +338,15 @@ if(HIPBLASLT_ENABLE_MXDATAGENERATOR
 endif()
 if(_hipblaslt_mxdatagen_enabled)
     add_subdirectory(clients/common)
+endif()
+
+if(HIPBLASLT_INSTALL_ROCISA AND NOT HIPBLASLT_BUNDLE_PYTHON_DEPS)
+    message(FATAL_ERROR
+        "HIPBLASLT_INSTALL_ROCISA is ON but HIPBLASLT_BUNDLE_PYTHON_DEPS is OFF: the rocisa "
+        "extension is only built under HIPBLASLT_BUNDLE_PYTHON_DEPS, so there is nothing to "
+        "install and the install tree would silently lack rocisa (breaking downstream codegen "
+        "such as hipSPARSELt). Enable HIPBLASLT_BUNDLE_PYTHON_DEPS, or set "
+        "HIPBLASLT_INSTALL_ROCISA=OFF.")
 endif()
 
 add_subdirectory(tensilelite)

@@ -16,6 +16,15 @@ if(TENSILELITE_ENABLE_HOST)
 
     option(TENSILELITE_BUILD_SHARED_LIBS "Build tensilelite-host as shared vs static" ON)
     set(BUILD_SHARED_LIBS ${TENSILELITE_BUILD_SHARED_LIBS})
+    if(DEFINED HIPBLASLT_BUILD_SHARED_LIBS AND NOT HIPBLASLT_BUILD_SHARED_LIBS
+       AND TENSILELITE_BUILD_SHARED_LIBS)
+        message(STATUS
+            "hipBLASLt is static (HIPBLASLT_BUILD_SHARED_LIBS=OFF) but tensilelite-host "
+            "remains shared: it is installed and exported as roc::tensilelite-host for "
+            "separate-subproject consumers such as hipSPARSELt. A fully static "
+            "tensilelite-host is not yet a supported exported configuration; set "
+            "-DTENSILELITE_BUILD_SHARED_LIBS=OFF only for a fully in-tree build.")
+    endif()
     add_library(tensilelite-host)
     add_library(roc::tensilelite-host ALIAS tensilelite-host)
 
@@ -63,7 +72,7 @@ if(TENSILELITE_ENABLE_HOST)
         PUBLIC
             $<BUILD_INTERFACE:rocisa::rocisa-cpp>
             $<BUILD_INTERFACE:roc::origami>
-            $<BUILD_INTERFACE:hip::host>
+            hip::host
         PRIVATE
             hip::device
             ZLIB::ZLIB

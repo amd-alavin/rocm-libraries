@@ -152,6 +152,15 @@ endif()
 if(HIPSPARSELT_ENABLE_HIP)
     find_package(hipblaslt CONFIG REQUIRED)
 
+    if(NOT TARGET roc::tensilelite-host)
+        message(FATAL_ERROR
+            "The hipBLASLt package found at '${hipblaslt_DIR}' does not export "
+            "roc::tensilelite-host, which hipSPARSELt links (see "
+            "library/src/hcc_detail/rocsparselt/CMakeLists.txt). Rebuild hipBLASLt with "
+            "-DTENSILELITE_ENABLE_HOST=ON and -DTENSILELITE_BUILD_SHARED_LIBS=ON so the "
+            "shared tensilelite-host library is installed and exported.")
+    endif()
+
     set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.md"
         CACHE FILEPATH "License file for package" FORCE
     )
@@ -192,13 +201,6 @@ if(HIPSPARSELT_ENABLE_HIP)
         # subprocess finds them (mirrors hipBLASLt's own bundled-python PATH).
         get_filename_component(_hipsparselt_hip_bindir "${hip_DIR}/../../../bin" ABSOLUTE)
         get_filename_component(_hipsparselt_cxx_bindir "${CMAKE_CXX_COMPILER}" DIRECTORY)
-        set(HIPBLASLT_PYTHON_COMMAND
-            "${CMAKE_COMMAND}" -E env
-            "PYTHONPATH=$<TARGET_FILE_DIR:roc::tensilelite-host>/hipblaslt:${HIPBLASLT_CODEGEN_ROOT}"
-            "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:roc::origami>:${_hipsparselt_rocisa_dir}:$ENV{LD_LIBRARY_PATH}"
-            "PATH=${_hipsparselt_hip_bindir}:${_hipsparselt_cxx_bindir}:$ENV{PATH}"
-            --
-            "${Python3_EXECUTABLE}")
 
         set(_hipsparselt_tensile_out "${CMAKE_BINARY_DIR}/Tensile")
         set(_hipsparselt_codegen_flags "")
@@ -211,6 +213,9 @@ if(HIPSPARSELT_ENABLE_HIP)
             OUTPUT_DIR "${_hipsparselt_tensile_out}"
             ARCHES ${GPU_TARGETS}
             CXX_COMPILER "${CMAKE_CXX_COMPILER}"
+            PYTHONPATH_EXTRA "$<TARGET_FILE_DIR:roc::tensilelite-host>/hipblaslt" "${HIPBLASLT_CODEGEN_ROOT}"
+            RUNTIME_LIB_DIRS "$<TARGET_FILE_DIR:roc::origami>" "${_hipsparselt_rocisa_dir}"
+            TOOL_BIN_DIRS "${_hipsparselt_hip_bindir}" "${_hipsparselt_cxx_bindir}"
             ${_hipsparselt_codegen_flags}
         )
 
