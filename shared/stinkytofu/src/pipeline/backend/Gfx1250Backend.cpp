@@ -41,6 +41,7 @@
 #include "stinkytofu/transforms/asm/EstimateAsmCyclesPass.hpp"
 #include "stinkytofu/transforms/asm/FlattenCalleesPass.hpp"
 #include "stinkytofu/transforms/asm/InsertClusterBarrierPass.hpp"
+#include "stinkytofu/transforms/asm/InsertCoexecHazardPass.hpp"
 #include "stinkytofu/transforms/asm/InsertDelayAluPass.hpp"
 #include "stinkytofu/transforms/asm/InsertVgprMsbPass.hpp"
 #include "stinkytofu/transforms/asm/InsertWaitAluPass.hpp"
@@ -195,6 +196,12 @@ bool buildGfx1250Pipeline(PassManager& pm, StinkyAsmModule& module, const PassBu
     if (moduleOptions.EnableESM2) {
         pm.addPass(createInsertWaitAluPass(module));
     }
+
+    // Whole-kernel co-execution data-hazard V_NOPs (gfx1250). Runs after
+    // InsertWaitAluPass (its s_wait_alu are not VALU and must already be placed
+    // so they are not miscounted as co-exec slots) and before InsertDelayAluPass
+    // (S_DELAY_ALU needs the final stream including any inserted V_NOPs).
+    pm.addPass(createInsertCoexecHazardPass(module));
 
     pm.addPass(createMemTokenConsistencyCheckPass());
 
