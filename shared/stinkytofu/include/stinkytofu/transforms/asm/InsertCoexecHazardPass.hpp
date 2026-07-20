@@ -55,9 +55,14 @@ class StinkyAsmModule;
 /// normal gfx1250 case, emitted by TensileLite) the reduced counts apply:
 /// WMMA->WMMA = 1, WMMA->VALU = 0.
 ///
-/// Pre-existing V_NOPs (e.g. TensileLite's) are counted as existing slots and
-/// never stripped. Runs whole-kernel, AFTER InsertWaitAluPass (s_wait_alu are
-/// not VALU and must already be placed) and BEFORE InsertDelayAluPass.
+/// The pass takes full ownership of hazard V_NOPs: it first strips every bare
+/// V_NOP (TensileLite's mode-unaware miVALUInstrDataHazard fillers are the only
+/// bare-V_NOP source on this path), guarantees co-execution is OFF by ensuring
+/// the DISABLE_XDL_ARB_STALL setreg exists (emitting one at the entry anchor if
+/// absent), then re-emits the correct mode-aware counts. This avoids the
+/// over-emission that results from layering on top of TensileLite's fixed 4/8.
+/// Runs whole-kernel, AFTER InsertWaitAluPass (s_wait_alu are not VALU and must
+/// already be placed) and BEFORE InsertDelayAluPass.
 ///
 /// The module overload reaches callee Functions; the no-argument overload
 /// (stinkytofu-opt single-pass mode, unit tests) processes only the given

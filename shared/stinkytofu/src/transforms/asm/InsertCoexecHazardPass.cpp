@@ -319,7 +319,77 @@ class InsertCoexecHazardPass : public StinkyInstPass {
         }
     }
 
+    // Strip every bare v_nop in the function. On the gfx1250 TensileLite path the
+    // only bare-v_nop source is the mode-unaware miVALUInstrDataHazard filler at
+    // the loop->epilogue boundary (activation code uses s_nop, and no earlier
+    // StinkyTofu pass emits v_nops), so all bare v_nops are hazard fillers this
+    // pass owns. Removing them lets the re-emit below size hazards from scratch
+    // for the actual co-exec mode instead of inheriting TensileLite's always-ON
+    // 4/8 counts. Returns the number removed.
+    size_t stripVNops(Function& func) {
+        size_t removed = 0;
+        for (BasicBlock& bb : func) {
+            for (auto it = bb.begin(); it != bb.end();) {
+                auto* inst = dyn_cast<StinkyInstruction>(it.getNodePtr());
+                IRBase* node = it.getNodePtr();
+                ++it;  // advance before a possible erase
+                if (inst && inst->getUnifiedOpcode() == GFX::v_nop) {
+                    bb.removeIR(node);
+                    ++removed;
+                }
+            }
+        }
+        return removed;
+    }
+
+    // Ensure the DISABLE_XDL_ARB_STALL setreg (hwreg(26,4,1)=1) exists so co-exec
+    // is OFF and the reduced counts apply. TensileLite already emits it on the
+    // normal path (detected, not duplicated); this only fires as a fallback when
+    // it is absent, anchoring at the kernel entry label like InsertWaitAluPass.
+    void ensureArbStallSetreg(Function& func) {
+        if (!config_.hasArbStallBit) return;
+        for (BasicBlock& bb : func)
+            for (auto& node : bb) {
+                auto* inst = dyn_cast<StinkyInstruction>(&node);
+                if (inst && !isPseudoInst(inst) && isArbStallSetreg(*inst)) return;  // present
+            }
+
+        BasicBlock* entry = func.getEntryBlock();
+        if (!entry) return;
+        BasicBlock* anchorBB = entry;
+        for (BasicBlock& bb : func)
+            if (bb.getLabel() == "label_ASM_Start") {
+                anchorBB = &bb;
+                break;
+            }
+        auto anchorIt = anchorBB->begin();
+        while (anchorIt != anchorBB->end()) {
+            auto* inst = dyn_cast<StinkyInstruction>(anchorIt.getNodePtr());
+            if (inst && isPseudoInst(inst)) {
+                ++anchorIt;
+                continue;
+            }
+            break;
+        }
+        IRBase* anchor = (anchorIt == anchorBB->end()) ? nullptr : anchorIt.getNodePtr();
+        AsmIRBuilder builder(*anchorBB, archId_);
+        StinkyInstruction* setreg =
+            builder.create(getMCIDByUOp(GFX::s_setreg_IMM32_b32, archId_), anchor);
+        const HwReg::SubField arb = HwReg::schedModeDisableXdlArbStall(archId_);
+        setreg->addDestReg(StinkyRegister::Hwreg(HwReg::schedModeId(archId_), arb.offset, arb.size));
+        setreg->addSrcReg(StinkyRegister(1));
+        PASS_DEBUG(std::cerr << "[InsertCoexecHazard]   inserted DISABLE_XDL_ARB_STALL setreg at \""
+                             << anchorBB->getLabel() << "\"\n");
+    }
+
     void processFunction(Function& func) {
+        // Take ownership of hazard v_nops: strip TensileLite's mode-unaware
+        // fillers, guarantee co-exec is OFF, then re-emit correct counts.
+        const size_t stripped = stripVNops(func);
+        ensureArbStallSetreg(func);
+        PASS_DEBUG(std::cerr << "[InsertCoexecHazard] stripped " << stripped
+                             << " pre-existing v_nop(s)\n");
+
         std::unordered_map<const BasicBlock*, bool> entryOff;
         computeCoexecOff(func, entryOff);
 
