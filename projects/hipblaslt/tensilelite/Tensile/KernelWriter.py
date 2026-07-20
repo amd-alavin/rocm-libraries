@@ -5466,6 +5466,15 @@ class KernelWriter(metaclass=abc.ABCMeta):
       if kernel["PrefetchGlobalRead"] >= 2:
         for idxPgr in range(1, kernel["PrefetchGlobalRead"]):
           module.add(self.openPrefetchGlobalRead2orMore(kernel, idxPgr))
+          # StreamKMulticast: the cooperative-multicast loads emitted below for
+          # this prefetch stage sit inside the single-iteration guard branch,
+          # past the generic per-load cluster-barrier bracketing boundary.
+          # Bracket them with a self-contained cluster-scope handshake so every
+          # multicast load stays synchronized and signal/wait counts stay
+          # balanced. Gated on StreamKMulticast (only ever set on the StreamK=3
+          # component), so the emitted code is unchanged for every other path.
+          if kernel.get("StreamKMulticast", 0):
+            module.add(skComponent.streamKMulticastProloguePrefetchHandshake(self, kernel))
           # For UnrollLoopSwapGlobalReadOrder, we also need to swap ds write A/B order.
           # In scheduling, we always schedule lwa first then lwb second,
           # Putting lwb in lwa's code object can easily change the order.
