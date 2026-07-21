@@ -137,20 +137,86 @@ st.func @no_wait_no_dep() {
   v10 = "st.buffer_load_b32"(v20) { issueCycles = 1, latencyCycles = 100 }
 }
 
-#--- Two pending VALU event types (CSMACC + TRANS) on VA_VDST force the
-#--- counter into out-of-order mode → emitted wait is forced to 0.
-# CHECK-LABEL: @va_vdst_ooo_forces_zero
+#--- Producer is the ONLY op in its VALU sub-pipe (v_rcp_f32 → TRANS), with a
+#--- later CSMACC (v_add_f32) in a different pipe. The consumer needs the TRANS
+#--- result; it has zero same-pipe followers (f=0), so the wait is 0 even though
+#--- the optimization is active. Two pipes are live, but the per-pipe follower
+#--- count — not the presence of mixed pipes — is what drives the value here.
+# CHECK-LABEL: @va_vdst_producer_last_of_pipe_zero
 # CHECK: v_rcp_f32
 # CHECK: v_add_f32
 # CHECK: s_wait_alu
 # CHECK-SAME: va_vdst = 0
 # CHECK: buffer_load_b32
 
-st.func @va_vdst_ooo_forces_zero() {
+st.func @va_vdst_producer_last_of_pipe_zero() {
 ^entry:
   v0 = "st.v_rcp_f32"(v1) { issueCycles = 1, latencyCycles = 8 }
   v2 = "st.v_add_f32"(v3, v4) { issueCycles = 1, latencyCycles = 5 }
   v10 = "st.buffer_load_b32"(v0) { issueCycles = 1, latencyCycles = 100 }
+}
+
+#--- Per-pipe OOO optimization: a CSMACC producer (v10) with ONE later same-pipe
+#--- CSMACC (v20), plus a TRANS (v_rcp_f32) in a second pipe. The consumer needs
+#--- v10. CSMACC pipe has issued=2, producer ordinal=1 → f=1 same-pipe follower,
+#--- so the emitted wait is va_vdst(1), NOT the conservative 0 the old lumped
+#--- out-of-order handling produced. In-order-within-pipe guarantees the producer
+#--- is done once its one follower drains, regardless of the TRANS pipe.
+# CHECK-LABEL: @va_vdst_ooo_follower_nonzero
+# CHECK: v_add_f32
+# CHECK: v_add_f32
+# CHECK: v_rcp_f32
+# CHECK: s_wait_alu
+# CHECK-SAME: va_vdst = 1
+# CHECK: buffer_load_b32
+
+st.func @va_vdst_ooo_follower_nonzero() {
+^entry:
+  v10 = "st.v_add_f32"(v1, v2) { issueCycles = 1, latencyCycles = 5 }
+  v20 = "st.v_add_f32"(v3, v4) { issueCycles = 1, latencyCycles = 5 }
+  v30 = "st.v_rcp_f32"(v5) { issueCycles = 1, latencyCycles = 8 }
+  v40 = "st.buffer_load_b32"(v10) { issueCycles = 1, latencyCycles = 100 }
+}
+
+#--- Per-pipe OOO fallback: the CSMACC producer (v10) is the LAST op in its pipe,
+#--- with two later TRANS (v_rcp_f32) in a second pipe. The consumer needs v10 but
+#--- it has zero same-pipe followers (f=0), so no non-zero wait is provable —
+#--- va_vdst(0). The trailing other-pipe ops cannot lift the wait because they may
+#--- complete out-of-order with the producer.
+# CHECK-LABEL: @va_vdst_ooo_producer_last_zero
+# CHECK: v_add_f32
+# CHECK: v_rcp_f32
+# CHECK: v_rcp_f32
+# CHECK: s_wait_alu
+# CHECK-SAME: va_vdst = 0
+# CHECK: buffer_load_b32
+
+st.func @va_vdst_ooo_producer_last_zero() {
+^entry:
+  v10 = "st.v_add_f32"(v1, v2) { issueCycles = 1, latencyCycles = 5 }
+  v30 = "st.v_rcp_f32"(v5) { issueCycles = 1, latencyCycles = 8 }
+  v50 = "st.v_rcp_f32"(v6) { issueCycles = 1, latencyCycles = 8 }
+  v40 = "st.buffer_load_b32"(v10) { issueCycles = 1, latencyCycles = 100 }
+}
+
+#--- Consumer needs TWO producers in different pipes: CSMACC v10 (with a same-pipe
+#--- follower v20 → f=1) AND TRANS v30 (last of its pipe → f=0). The final wait is
+#--- min(1, 0) = 0: we must drain fully because the TRANS operand can't use a
+#--- non-zero wait. addWait's min across operands picks the tightest.
+# CHECK-LABEL: @va_vdst_ooo_two_pipe_consumer_min
+# CHECK: v_add_f32
+# CHECK: v_add_f32
+# CHECK: v_rcp_f32
+# CHECK: s_wait_alu
+# CHECK-SAME: va_vdst = 0
+# CHECK: buffer_load_b32
+
+st.func @va_vdst_ooo_two_pipe_consumer_min() {
+^entry:
+  v10 = "st.v_add_f32"(v1, v2) { issueCycles = 1, latencyCycles = 5 }
+  v20 = "st.v_add_f32"(v3, v4) { issueCycles = 1, latencyCycles = 5 }
+  v30 = "st.v_rcp_f32"(v5) { issueCycles = 1, latencyCycles = 8 }
+  v40 = "st.buffer_load_b32"(v10, v30) { issueCycles = 1, latencyCycles = 100 }
 }
 
 #--- Fall-off exit: the function has no s_endpgm. Mode2 is enabled at entry and
