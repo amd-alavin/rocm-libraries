@@ -467,22 +467,35 @@ class WaitcntBrackets {
         unsigned ord = (c == CT_VA_VDST) ? s.vaOrdinal : s.vmOrdinal;
         if (ord == 0 || ord <= floor_[lane]) return;  // no producer / proven done
 
-        unsigned f = issued[lane] - ord;  // same-lane followers
+        unsigned f = issued[lane] - ord;  // same-lane followers, all still in flight
         bool ooo = counterOutOfOrder(c);
-        unsigned chosen = ooo ? 0u : std::min(f, maxEmittableWait(c));
+        unsigned chosen;
+        if (c == CT_VA_VDST) {
+            // Per-pipe follower count is safe regardless of how many other VALU
+            // sub-pipes are pending: if the producer were still outstanding, all
+            // f of its same-pipe followers would be too (FIFO within a pipe), so
+            // the counter would exceed f. Other pipes only add to the total, so
+            // va_vdst(f) still guarantees the producer is done. This replaces the
+            // legacy "drain to 0 when >=2 pipes pending".
+            chosen = std::min(f, maxEmittableWait(c));
+        } else {
+            // vm_vsrc: keep the conservative multi-class drain. The in-order-
+            // within-class guarantee for LDS/FLAT/VMEM source reads is not
+            // confirmed from the spec, so a non-zero wait under mixed classes
+            // could be an unsafe WAR. Single class → same-lane follower count.
+            chosen = ooo ? 0u : std::min(f, maxEmittableWait(c));
+        }
         addWait(wait, c, chosen);
 
         PASS_DEBUG(
-            std::cerr
-            << "[InsertWaitAlu]     wait hit " << counterName(c) << " on v" << k.idx << "("
-            << halfName(k.half) << "," << role << ") lane=" << laneName(lane) << " ord=" << ord
-            << " issued=" << issued[lane] << " floor=" << floor_[lane] << " f=" << f
-            << " ooo=" << ooo
-            << (ooo ? " events={" + pendingEventsStr(pendingEvents & eventsForCounter(c)) + "}"
-                    : std::string())
-            << " → wait=" << chosen
-            << (ooo ? " (ooo drain; f would be " + std::to_string(f) + ")" : std::string())
-            << "\n");
+            std::cerr << "[InsertWaitAlu]     wait hit " << counterName(c) << " on v" << k.idx
+                      << "(" << halfName(k.half) << "," << role << ") lane=" << laneName(lane)
+                      << " ord=" << ord << " issued=" << issued[lane] << " floor=" << floor_[lane]
+                      << " f=" << f << " ooo=" << ooo
+                      << (ooo ? " events={" +
+                                    pendingEventsStr(pendingEvents & eventsForCounter(c)) + "}"
+                              : std::string())
+                      << " → wait=" << chosen << "\n");
     }
 
     bool counterOutOfOrder(CounterType c) const {
