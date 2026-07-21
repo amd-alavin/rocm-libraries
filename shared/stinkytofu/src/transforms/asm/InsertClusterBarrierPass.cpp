@@ -644,11 +644,37 @@ void insertClusterBarrierWaitBefore(IRBase* anchor, const char* comment, AsmIRBu
 ///       gate keys off the same absolute iteration even when the schedule
 ///       decremented LCL before the anchor.
 ///
+/// Emit `s_wait_tensorcnt 0` immediately before \p anchor, mirroring how the
+/// waitcnt-insertion pass materializes a tensor drain. This runs on every wave
+/// (it precedes the WaveIdx-gated signal block) so each wave retires its own
+/// cooperative tensor_load_to_lds. On the StreamKMulticast path the mainloop
+/// cooperative load has odd waves broadcast B into the cluster peers' LDS; that
+/// broadcast is only coherent once its tensor counter has drained, so it must
+/// retire before the peers re-enter the next cluster-scope barrier round.
+void insertBroadcastTensorDrainBefore(IRBase* anchor, AsmIRBuilder& irBuilder, GfxArchID archId) {
+    const HwInstDesc* waitDesc = getMCIDByUOp(GFX::s_wait_tensorcnt, archId);
+    assert(waitDesc && "s_wait_tensorcnt opcode is not supported on this architecture");
+    StinkyInstruction* w = irBuilder.create(waitDesc, anchor);
+    w->addSrcReg(StinkyRegister(0));
+    SWaitTensorCntData d;
+    d.tlcnt = 0;
+    w->addModifier<SWaitTensorCntData>(d);
+    w->addModifier<CommentData>(
+        CommentData{"drain StreamKMulticast cooperative broadcast before cluster-scope round"});
+}
+
 /// \p pgrValue and \p lclPreDecrement are consulted by mode (b) only.
+/// \p streamKMulticast, combined with \p pgrValue >= 2, gates the per-iteration
+/// broadcast drain in mode (c) (the mainloop Rule 4 handshake only).
 void insertClusterBarrierHandshakeBefore(IRBase* anchor, AsmIRBuilder& irBuilder, GfxArchID archId,
                                          int pgrValue, StinkyInstruction* liveLclCmp,
-                                         int lclPreDecrement) {
+                                         int lclPreDecrement, bool streamKMulticast) {
     if (kRule4ForceUngatedSignalMode) {
+        // StreamKMulticast + PGR2: drain the cooperative broadcast before the
+        // wave-0-gated arrive so peers see coherent B before the next round.
+        if (streamKMulticast && pgrValue >= 2) {
+            insertBroadcastTensorDrainBefore(anchor, irBuilder, archId);
+        }
         // Mode (c): always-ungated signal. Emit the WaveIdx-gated
         // `s_barrier_signal -3` then a bare `s_barrier_wait -3` for every
         // trigger -- the cluster signal is NEVER wrapped in an LCL skip
@@ -806,8 +832,12 @@ class InsertClusterBarrierPassImpl : public Pass {
    public:
     static char ID;
 
-    InsertClusterBarrierPassImpl(bool isKernelScope, int pgrValue, int plrValue)
-        : isKernelScope_(isKernelScope), pgrValue_(pgrValue), plrValue_(plrValue) {}
+    InsertClusterBarrierPassImpl(bool isKernelScope, int pgrValue, int plrValue,
+                                 bool streamKMulticast)
+        : isKernelScope_(isKernelScope),
+          pgrValue_(pgrValue),
+          plrValue_(plrValue),
+          streamKMulticast_(streamKMulticast) {}
 
     const char* getName() const override {
         return "Insert Cluster Barrier";
@@ -1098,7 +1128,8 @@ class InsertClusterBarrierPassImpl : public Pass {
             for (const auto& [trigger, nextIt, liveLclCmp, lclPreDecrement] : pending) {
                 IRBase* anchor = (nextIt != bb.end()) ? nextIt.getNodePtr() : nullptr;
                 insertClusterBarrierHandshakeBefore(anchor, irBuilder, archId, pgrValue_,
-                                                    liveLclCmp, lclPreDecrement);
+                                                    liveLclCmp, lclPreDecrement,
+                                                    streamKMulticast_);
                 (void)trigger;  // queued for ordering only; insertion uses `anchor`
             }
             for (IRBase* anchor : gsu1Anchors) {
@@ -1157,15 +1188,17 @@ class InsertClusterBarrierPassImpl : public Pass {
     const bool isKernelScope_;
     const int pgrValue_;
     const int plrValue_;
+    const bool streamKMulticast_;
 };
 
 char InsertClusterBarrierPassImpl::ID = 0;
 
 }  // namespace
 
-std::unique_ptr<Pass> createInsertClusterBarrierPass(bool isKernelScope, int pgrValue,
-                                                     int plrValue) {
-    return std::make_unique<InsertClusterBarrierPassImpl>(isKernelScope, pgrValue, plrValue);
+std::unique_ptr<Pass> createInsertClusterBarrierPass(bool isKernelScope, int pgrValue, int plrValue,
+                                                     bool streamKMulticast) {
+    return std::make_unique<InsertClusterBarrierPassImpl>(isKernelScope, pgrValue, plrValue,
+                                                          streamKMulticast);
 }
 
 }  // namespace stinkytofu

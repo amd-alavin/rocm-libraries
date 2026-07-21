@@ -6682,6 +6682,12 @@ class KernelWriter(metaclass=abc.ABCMeta):
                                # Cluster-barrier handshake insertion in Gfx1250Backend
                                # (kernel-scope at every OptLevel when set).
                                "ClusterBarrier": bool(kernel.get("ClusterBarrier", False)),
+                               # StreamKMulticast gates the per-iteration cooperative-broadcast
+                               # drain in InsertClusterBarrierPass Rule 4 (mainloop) mode c: with
+                               # PGR>=2 an `s_wait_tensorcnt 0` is emitted before the cluster-scope
+                               # `s_barrier_signal -3` arrive so the broadcast retires before peers
+                               # re-enter the next round. Defaults off; no-op for every other kernel.
+                               "StreamKMulticast": bool(kernel.get("StreamKMulticast", 0)),
                                # PrefetchGlobalRead (PGR) passed to InsertClusterBarrierPass.
                                # Gates Rule 3 (`LCL <= PGR` skip) and Rule 4 (`LCL == PGR+1`
                                # skip in fresh-gate mode; inherits upstream `LCL == PGR` cmp
