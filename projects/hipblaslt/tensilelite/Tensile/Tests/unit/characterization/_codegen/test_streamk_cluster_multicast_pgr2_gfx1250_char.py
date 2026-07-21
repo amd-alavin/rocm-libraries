@@ -92,12 +92,21 @@ def test_streamk_cluster_multicast_pgr2_gfx1250_emits_assembly():
             f"Kernel {base!r} PGR2 prologue prefetch load is NOT bracketed by a "
             f"cluster-scope -3 handshake"
         )
-        # Balance: every arrive (signal -3) is matched by a completion (wait -3).
+        # Cluster-scope split-barrier balance. The prologue wave-0 arrive
+        # (s_barrier_signal -3) is consumed by exactly one of two mutually
+        # exclusive cluster waits: the last-iteration guard's zero-iteration
+        # skip-edge wait, or the first-load wait on the >=1-iteration
+        # fall-through. Both are emitted statically but only one executes on any
+        # control-flow path, so the static wait count is exactly one greater
+        # than the signal count; every other arrive (including this config's
+        # dedicated prologue-prefetch handshake) is a self-contained arrive/wait
+        # pair. Any other imbalance would leave a cluster wait unpaired and
+        # stall the cluster waves.
         n_signal = src.count("s_barrier_signal -3")
         n_wait = src.count("s_barrier_wait -3")
-        assert n_signal == n_wait, (
-            f"Kernel {base!r} has imbalanced cluster barrier: "
-            f"{n_signal} signal(-3) vs {n_wait} wait(-3)"
+        assert n_wait == n_signal + 1, (
+            f"Kernel {base!r} has unexpected cluster barrier balance: "
+            f"{n_signal} signal(-3) vs {n_wait} wait(-3) (expected wait == signal + 1)"
         )
 
 
