@@ -113,6 +113,56 @@ inline CounterType counterFromEvent(WaitEventType e) {
     }
 }
 
+// Per-pipe lanes. Each hardware counter aggregates several sub-pipelines that
+// complete in issue order internally yet out-of-order with one another:
+//   VA_VDST → CSMACC, DPMACC, TRANS, XDL
+//   VM_VSRC → LDS, FLAT, VMEM
+// Tracking each pipe separately lets us emit the tightest safe wait: to prove a
+// producer in pipe E is done, we only need enough same-pipe followers to have
+// drained, regardless of the other pipes' depth. The lane order mirrors
+// WaitEventType, so laneOfEvent is a straight cast.
+enum Lane : uint8_t {
+    LANE_CSMACC = 0,
+    LANE_DPMACC = 1,
+    LANE_TRANS = 2,
+    LANE_XDL = 3,
+    LANE_LDS = 4,
+    LANE_FLAT = 5,
+    LANE_VMEM = 6,
+    NUM_LANES = 7,
+};
+
+inline Lane laneOfEvent(WaitEventType e) {
+    return static_cast<Lane>(e);  // WaitEventType and Lane share ordering
+}
+
+inline const char* laneName(Lane l) {
+    switch (l) {
+        case LANE_CSMACC:
+            return "CSMACC";
+        case LANE_DPMACC:
+            return "DPMACC";
+        case LANE_TRANS:
+            return "TRANS";
+        case LANE_XDL:
+            return "XDL";
+        case LANE_LDS:
+            return "LDS";
+        case LANE_FLAT:
+            return "FLAT";
+        default:
+            return "VMEM";
+    }
+}
+
+// Lane index range [lo, hi) owned by a counter.
+inline int counterLaneLo(CounterType c) {
+    return c == CT_VA_VDST ? LANE_CSMACC : LANE_LDS;
+}
+inline int counterLaneHi(CounterType c) {
+    return c == CT_VA_VDST ? LANE_LDS : NUM_LANES;
+}
+
 inline const char* counterName(CounterType c) {
     return c == CT_VA_VDST ? "va_vdst" : "vm_vsrc";
 }
@@ -298,120 +348,141 @@ inline unsigned maxEmittableWait(CounterType c) {
 // WaitcntBrackets — UB/LB scoreboard with per-VGPR per-counter scores
 // ---------------------------------------------------------------------------
 
-using PerCounterScores = std::array<unsigned, NUM_COUNTERS>;
+// Per-VGPR producer stamp: the (lane, ordinal) of the last VA producer that
+// wrote the reg, and of the last VM read that sourced it. ordinal==0 means "no
+// producer on that side". The lane records which sub-pipeline produced it, so a
+// consumer can count same-pipe followers.
+struct VgprStamp {
+    Lane vaLane = LANE_CSMACC;  // meaningful only when vaOrdinal != 0
+    unsigned vaOrdinal = 0;     // cumulative position within vaLane
+    Lane vmLane = LANE_LDS;     // meaningful only when vmOrdinal != 0
+    unsigned vmOrdinal = 0;     // cumulative position within vmLane
+};
 
 class WaitcntBrackets {
    public:
+    // Aggregate views of a counter (sum of its lanes). getScoreRange feeds the
+    // EXEC-guard "any VALU in flight" test; the LB/UB variants are debug-only.
     unsigned getScoreLB(CounterType c) const {
-        return scoreLB[c];
+        return laneSum(c, floor_);
     }
     unsigned getScoreUB(CounterType c) const {
-        return scoreUB[c];
+        return laneSum(c, issued);
     }
     unsigned getScoreRange(CounterType c) const {
-        return scoreUB[c] - scoreLB[c];
+        return getScoreUB(c) - getScoreLB(c);
     }
     size_t scoresSize() const {
         return scores.size();
     }
 
-    unsigned getVGPRScore(RegKey k, CounterType c) const {
-        auto it = scores.find(k);
-        return it == scores.end() ? 0u : it->second[c];
-    }
-
     // Stamp scoreboard after instruction `inst` issues with event `ev`.
-    // VA_VDST stamps each VGPR def, VM_VSRC stamps each VGPR src.
+    // VA_VDST stamps each VGPR def+src, VM_VSRC stamps each VGPR src.
     void onProducer(WaitEventType ev, const StinkyInstruction& inst, const VGPRHalfKeyer& keyer) {
         CounterType ct = counterFromEvent(ev);
+        Lane lane = laneOfEvent(ev);
         unsigned inc = (ct == CT_VA_VDST && hasMatrixScalePair(inst)) ? 2u : 1u;
-        unsigned curr = scoreUB[ct] + inc;
-        scoreUB[ct] = curr;
+        issued[lane] += inc;
+        unsigned ord = issued[lane];
         pendingEvents.insert(ev);
 
-        PASS_DEBUG(std::cerr << "[InsertWaitAlu]   stamp " << counterName(ct)
-                             << " event=" << eventName(ev) << " inc=" << inc << " new_ub=" << curr
+        PASS_DEBUG(std::cerr << "[InsertWaitAlu]   stamp lane=" << laneName(lane)
+                             << " event=" << eventName(ev) << " inc=" << inc << " ord=" << ord
+                             << " issued=" << issued[lane]
                              << " (mnemonic=" << inst.getHwInstDesc()->mnemonic << ")\n");
 
         const True16Modifiers* true16Mod = inst.getModifier<True16Modifiers>();
 
-        auto stamp = [&](unsigned idx, HighBitSel half, CounterType c) {
+        auto stampVA = [&](unsigned idx, HighBitSel half) {
             RegKey k = keyer.producerKey(idx, half);
-            scores[k][c] = curr;
-            PASS_DEBUG(std::cerr << "[InsertWaitAlu]     score=" << curr << " on v" << k.idx << "("
-                                 << halfName(k.half) << ") " << eventName(ev) << "\n");
+            VgprStamp& s = scores[k];
+            s.vaLane = lane;
+            s.vaOrdinal = ord;
+            PASS_DEBUG(std::cerr << "[InsertWaitAlu]     stamp va v" << k.idx << "("
+                                 << halfName(k.half) << ") lane=" << laneName(lane)
+                                 << " ord=" << ord << "\n");
+        };
+        auto stampVM = [&](unsigned idx, HighBitSel half) {
+            RegKey k = keyer.producerKey(idx, half);
+            VgprStamp& s = scores[k];
+            s.vmLane = lane;
+            s.vmOrdinal = ord;
+            PASS_DEBUG(std::cerr << "[InsertWaitAlu]     stamp vm v" << k.idx << "("
+                                 << halfName(k.half) << ") lane=" << laneName(lane)
+                                 << " ord=" << ord << "\n");
         };
 
         if (ct == CT_VA_VDST) {
             forEachVGPR(
                 inst.getSrcRegs(), [&](size_t i) { return srcHalfSel(true16Mod, i); },
-                [&](unsigned idx, HighBitSel half) { stamp(idx, half, CT_VA_VDST); });
+                [&](unsigned idx, HighBitSel half) { stampVA(idx, half); });
             forEachVGPR(
                 inst.getDestRegs(), [&](size_t i) { return destHalfSel(true16Mod, i); },
-                [&](unsigned idx, HighBitSel half) { stamp(idx, half, CT_VA_VDST); });
+                [&](unsigned idx, HighBitSel half) { stampVA(idx, half); });
         } else {
             // VM_VSRC tracks in-flight VMEM reads, which are always full DWORD.
             forEachVGPR(
                 inst.getSrcRegs(), [](size_t) { return HighBitSel::NONE; },
-                [&](unsigned idx, HighBitSel half) { stamp(idx, half, CT_VM_VSRC); });
+                [&](unsigned idx, HighBitSel half) { stampVM(idx, half); });
         }
     }
 
     // For each VGPR src (RAW on VA_VDST) and each VGPR dst (WAW on VA_VDST,
-    // WAR on VM_VSRC), probe the score map and accumulate the worst-case wait.
+    // WAR on VM_VSRC), probe the stamp map and accumulate the worst-case wait.
     void onConsumer(const StinkyInstruction& inst, const VGPRHalfKeyer& keyer, Wait& wait) const {
         const True16Modifiers* true16Mod = inst.getModifier<True16Modifiers>();
 
         forEachVGPR(
             inst.getSrcRegs(), [&](size_t i) { return srcHalfSel(true16Mod, i); },
             [&](unsigned idx, HighBitSel half) {
-                keyer.forEachConsumerKey(idx, half, [&](RegKey k) {
-                    determineWaitForScore(CT_VA_VDST, getVGPRScore(k, CT_VA_VDST), wait, k,
-                                          "src(RAW)");
-                });
+                keyer.forEachConsumerKey(
+                    idx, half, [&](RegKey k) { determineWait(CT_VA_VDST, k, wait, "src(RAW)"); });
             });
 
         forEachVGPR(
             inst.getDestRegs(), [&](size_t i) { return destHalfSel(true16Mod, i); },
             [&](unsigned idx, HighBitSel half) {
-                keyer.forEachConsumerKey(idx, half, [&](RegKey k) {
-                    determineWaitForScore(CT_VA_VDST, getVGPRScore(k, CT_VA_VDST), wait, k,
-                                          "dst(WAW)");
-                });
+                keyer.forEachConsumerKey(
+                    idx, half, [&](RegKey k) { determineWait(CT_VA_VDST, k, wait, "dst(WAW)"); });
                 // WAR on VM_VSRC: writer-vs-in-flight-VMEM-read uses full DWORD.
                 RegKey full{RegType::V, idx, RegHalf::NONE};
-                determineWaitForScore(CT_VM_VSRC, getVGPRScore(full, CT_VM_VSRC), wait, full,
-                                      "dst(WAR)");
+                determineWait(CT_VM_VSRC, full, wait, "dst(WAR)");
             });
     }
 
-    void determineWaitForScore(CounterType c, unsigned score, Wait& wait, const RegKey& k,
-                               const char* role) const {
-        unsigned lb = scoreLB[c];
-        unsigned ub = scoreUB[c];
-        if (ub >= score && score > lb) {
-            unsigned chosen;
-            bool ooo = counterOutOfOrder(c);
-            if (ooo) {
-                chosen = 0;
-                addWait(wait, c, 0);
-            } else {
-                chosen = std::min(ub - score, maxEmittableWait(c));
-                addWait(wait, c, chosen);
-            }
-            // Include the consumer VGPR identity and the role (src/dst hazard
-            // class) so the user can trace which operand triggered the wait
-            // without re-reading the source IR by hand. When ooo=1 also dump
-            // the pending event set that forced the full drain.
-            PASS_DEBUG(
-                std::cerr << "[InsertWaitAlu]     wait hit " << counterName(c) << " on v" << k.idx
-                          << "(" << halfName(k.half) << "," << role << ")" << " score=" << score
-                          << " lb=" << lb << " ub=" << ub << " ooo=" << ooo
-                          << (ooo ? " events={" +
-                                        pendingEventsStr(pendingEvents & eventsForCounter(c)) + "}"
-                                  : std::string())
-                          << " → wait=" << chosen << "\n");
-        }
+    // Emit a wait for the hazard on VGPR `k` against counter `c`. The producer's
+    // (lane, ordinal) come from the stamp; the wait value is the same-lane
+    // follower count issued[lane]-ordinal.
+    //
+    // NOTE (Commit 1 — behavior-preserving refactor): when the counter has >=2
+    // sub-pipes pending (counterOutOfOrder) we still drain to 0, reproducing the
+    // legacy lumped emission exactly. The follower-count `f` is logged as the
+    // value the follow-up optimization will emit instead. In the single-pipe
+    // case f == the legacy ub-score, so output is unchanged.
+    void determineWait(CounterType c, const RegKey& k, Wait& wait, const char* role) const {
+        auto it = scores.find(k);
+        if (it == scores.end()) return;
+        const VgprStamp& s = it->second;
+        Lane lane = (c == CT_VA_VDST) ? s.vaLane : s.vmLane;
+        unsigned ord = (c == CT_VA_VDST) ? s.vaOrdinal : s.vmOrdinal;
+        if (ord == 0 || ord <= floor_[lane]) return;  // no producer / proven done
+
+        unsigned f = issued[lane] - ord;  // same-lane followers
+        bool ooo = counterOutOfOrder(c);
+        unsigned chosen = ooo ? 0u : std::min(f, maxEmittableWait(c));
+        addWait(wait, c, chosen);
+
+        PASS_DEBUG(
+            std::cerr
+            << "[InsertWaitAlu]     wait hit " << counterName(c) << " on v" << k.idx << "("
+            << halfName(k.half) << "," << role << ") lane=" << laneName(lane) << " ord=" << ord
+            << " issued=" << issued[lane] << " floor=" << floor_[lane] << " f=" << f
+            << " ooo=" << ooo
+            << (ooo ? " events={" + pendingEventsStr(pendingEvents & eventsForCounter(c)) + "}"
+                    : std::string())
+            << " → wait=" << chosen
+            << (ooo ? " (ooo drain; f would be " + std::to_string(f) + ")" : std::string())
+            << "\n");
     }
 
     bool counterOutOfOrder(CounterType c) const {
@@ -419,54 +490,51 @@ class WaitcntBrackets {
         return ev.twoOrMore();
     }
 
-    // Advance LB after a wait is inserted. count==0 fully drains the counter
-    // — clear its event bits so counterOutOfOrder() no longer flags it.
+    // Advance floor after a wait is inserted. A wait(count) bounds the TOTAL
+    // outstanding across the counter's lanes, so it lifts every lane's floor by
+    // (issued - count); count==0 fully drains all the counter's lanes and clears
+    // its pending event bits so counterOutOfOrder() no longer flags it.
     void applyWaitcnt(CounterType c, unsigned count) {
         if (count == kNoWait) return;
-        unsigned ub = scoreUB[c];
-        unsigned oldLB = scoreLB[c];
-        unsigned newLB = ub - std::min(count, ub - oldLB);
-        if (newLB > scoreLB[c]) scoreLB[c] = newLB;
+        for (int L = counterLaneLo(c); L < counterLaneHi(c); ++L) {
+            unsigned oldFloor = floor_[L];
+            unsigned newFloor = issued[L] >= count ? issued[L] - count : 0u;
+            if (newFloor > floor_[L]) floor_[L] = newFloor;
+            PASS_DEBUG(std::cerr << "[InsertWaitAlu]     apply " << counterName(c) << "(" << count
+                                 << ") lane=" << laneName(static_cast<Lane>(L)) << " floor "
+                                 << oldFloor << "→" << floor_[L] << " issued=" << issued[L]
+                                 << "\n");
+        }
         if (count == 0) pendingEvents = pendingEvents & ~eventsForCounter(c);
-        PASS_DEBUG(std::cerr << "[InsertWaitAlu]     apply " << counterName(c) << "(" << count
-                             << ") LB " << oldLB << "→" << scoreLB[c] << " UB=" << ub
-                             << (count == 0 ? " [drain events]" : "") << "\n");
     }
 
     // Widen this entry state with a predecessor's exit. Returns true (strictDom)
-    // when the other side contributed a tighter score or new event type.
+    // when the other side contributed deeper in-flight, a later ordinal, or a
+    // new pending event type.
     bool merge(const WaitcntBrackets& other) {
         bool strictDom = false;
-        struct MergeInfo {
-            unsigned oldLB, otherLB, myShift, otherShift;
-        };
-        std::array<MergeInfo, NUM_COUNTERS> mi{};
+        std::array<unsigned, NUM_LANES> myShift{}, otherShift{}, myOldFloor{}, otherOldFloor{};
 
-        for (int t = 0; t < NUM_COUNTERS; ++t) {
-            CounterType ct = static_cast<CounterType>(t);
-            unsigned myPending = scoreUB[ct] - scoreLB[ct];
-            unsigned otherPending = other.scoreUB[ct] - other.scoreLB[ct];
-            unsigned newUB = scoreLB[ct] + std::max(myPending, otherPending);
-
-            mi[t].oldLB = scoreLB[ct];
-            mi[t].otherLB = other.scoreLB[ct];
-            mi[t].myShift = newUB - scoreUB[ct];
-            mi[t].otherShift = newUB - other.scoreUB[ct];
-
-            scoreUB[ct] = newUB;
+        for (int L = 0; L < NUM_LANES; ++L) {
+            unsigned mineIF = issued[L] - floor_[L];
+            unsigned otherIF = other.issued[L] - other.floor_[L];
+            unsigned newIssued = floor_[L] + std::max(mineIF, otherIF);
+            myOldFloor[L] = floor_[L];
+            otherOldFloor[L] = other.floor_[L];
+            myShift[L] = newIssued - issued[L];
+            otherShift[L] = newIssued - other.issued[L];
+            issued[L] = newIssued;
         }
 
         for (const auto& [k, _] : other.scores) scores.try_emplace(k);
 
-        for (auto& [k, mySc] : scores) {
+        for (auto& [k, s] : scores) {
             auto it = other.scores.find(k);
-            for (int t = 0; t < NUM_COUNTERS; ++t) {
-                unsigned otherVal = (it != other.scores.end()) ? it->second[t] : 0;
-                unsigned myS = mySc[t] <= mi[t].oldLB ? 0 : mySc[t] + mi[t].myShift;
-                unsigned otherS = otherVal <= mi[t].otherLB ? 0 : otherVal + mi[t].otherShift;
-                if (otherS > myS) strictDom = true;
-                mySc[t] = std::max(myS, otherS);
-            }
+            const VgprStamp* o = (it != other.scores.end()) ? &it->second : nullptr;
+            mergeSide(s.vaLane, s.vaOrdinal, o ? o->vaLane : LANE_CSMACC, o ? o->vaOrdinal : 0,
+                      myShift, otherShift, myOldFloor, otherOldFloor, strictDom);
+            mergeSide(s.vmLane, s.vmOrdinal, o ? o->vmLane : LANE_LDS, o ? o->vmOrdinal : 0,
+                      myShift, otherShift, myOldFloor, otherOldFloor, strictDom);
         }
 
         if (!pendingEvents.containsAll(other.pendingEvents)) strictDom = true;
@@ -475,10 +543,35 @@ class WaitcntBrackets {
     }
 
    private:
-    std::array<unsigned, NUM_COUNTERS> scoreLB = {0, 0};
-    std::array<unsigned, NUM_COUNTERS> scoreUB = {0, 0};
+    // Sum issued/floor across the lanes owned by counter `c`.
+    static unsigned laneSum(CounterType c, const std::array<unsigned, NUM_LANES>& a) {
+        unsigned n = 0;
+        for (int L = counterLaneLo(c); L < counterLaneHi(c); ++L) n += a[L];
+        return n;
+    }
+
+    // Merge one side (VA or VM) of a VGPR stamp: shift both producers past their
+    // floors and keep the later (more conservative) one.
+    static void mergeSide(Lane& myLane, unsigned& myOrd, Lane oLane, unsigned oOrd,
+                          const std::array<unsigned, NUM_LANES>& myShift,
+                          const std::array<unsigned, NUM_LANES>& otherShift,
+                          const std::array<unsigned, NUM_LANES>& myOldFloor,
+                          const std::array<unsigned, NUM_LANES>& otherOldFloor, bool& strictDom) {
+        unsigned myS = myOrd <= myOldFloor[myLane] ? 0 : myOrd + myShift[myLane];
+        unsigned oS = (oOrd && oOrd > otherOldFloor[oLane]) ? oOrd + otherShift[oLane] : 0;
+        if (oS > myS) {
+            myLane = oLane;
+            myOrd = oS;
+            strictDom = true;
+        } else {
+            myOrd = myS;
+        }
+    }
+
+    std::array<unsigned, NUM_LANES> issued = {};
+    std::array<unsigned, NUM_LANES> floor_ = {};
     WaitEventSet pendingEvents;
-    std::unordered_map<RegKey, PerCounterScores, RegKeyHash> scores;
+    std::unordered_map<RegKey, VgprStamp, RegKeyHash> scores;
 };
 
 // ---------------------------------------------------------------------------
