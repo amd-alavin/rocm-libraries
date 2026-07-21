@@ -136,6 +136,28 @@ inline Lane laneOfEvent(WaitEventType e) {
     return static_cast<Lane>(e);  // WaitEventType and Lane share ordering
 }
 
+// VM_VSRC ordering groups (hardware FIFOs). Unlike the VA_VDST sub-pipes, the
+// VM_VSRC memory classes decrement in-order only *within* an ordering group:
+//   Group A (LDS FIFO):  ds_*  and flat_*
+//   Group B (TEX FIFO):  buffer/global/scratch/image  and flat_*
+// flat_* is a member of BOTH groups (hardware places it in both FIFOs), so a
+// flat producer accrues followers in either group. Tracking followers per group
+// lets us emit a precise vm_vsrc(f) instead of a full drain whenever f>0 — other
+// groups only inflate the shared counter, never deflate it, so cross-group mixes
+// are safe. The only drain case is f==0 (producer is last of its group).
+enum VMGroup : uint8_t {
+    VM_GROUP_A = 0,  // LDS FIFO
+    VM_GROUP_B = 1,  // TEX FIFO
+    NUM_VM_GROUPS = 2,
+};
+
+inline bool vmInGroupA(WaitEventType e) {
+    return e == EV_VGPR_LDS_READ || e == EV_VGPR_FLAT_READ;
+}
+inline bool vmInGroupB(WaitEventType e) {
+    return e == EV_VGPR_VMEM_READ || e == EV_VGPR_FLAT_READ;
+}
+
 inline const char* laneName(Lane l) {
     switch (l) {
         case LANE_CSMACC:
@@ -357,6 +379,11 @@ struct VgprStamp {
     unsigned vaOrdinal = 0;     // cumulative position within vaLane
     Lane vmLane = LANE_LDS;     // meaningful only when vmOrdinal != 0
     unsigned vmOrdinal = 0;     // cumulative position within vmLane
+    // VM_VSRC ordering-group ordinals. A pure-LDS producer sets only vmOrdA, a
+    // pure-VMEM producer only vmOrdB; a flat_* producer sets BOTH (it lives in
+    // both FIFOs). 0 means "not a member of that group".
+    unsigned vmOrdA = 0;  // cumulative position within Group A (LDS FIFO)
+    unsigned vmOrdB = 0;  // cumulative position within Group B (TEX FIFO)
 };
 
 class WaitcntBrackets {
@@ -402,14 +429,27 @@ class WaitcntBrackets {
                                  << halfName(k.half) << ") lane=" << laneName(lane)
                                  << " ord=" << ord << "\n");
         };
+        // VM_VSRC ordering-group bookkeeping. A flat_* op is placed in BOTH
+        // FIFOs, so it bumps both group counters; pure LDS/VMEM bumps only its
+        // own. ordA/ordB are the producer's in-order position within each group
+        // it belongs to (0 = not a member).
+        unsigned ordA = 0, ordB = 0;
+        if (ct == CT_VM_VSRC) {
+            if (vmInGroupA(ev)) ordA = ++vmGroupIssued[VM_GROUP_A];
+            if (vmInGroupB(ev)) ordB = ++vmGroupIssued[VM_GROUP_B];
+        }
+
         auto stampVM = [&](unsigned idx, HighBitSel half) {
             RegKey k = keyer.producerKey(idx, half);
             VgprStamp& s = scores[k];
             s.vmLane = lane;
             s.vmOrdinal = ord;
+            s.vmOrdA = ordA;
+            s.vmOrdB = ordB;
             PASS_DEBUG(std::cerr << "[InsertWaitAlu]     stamp vm v" << k.idx << "("
                                  << halfName(k.half) << ") lane=" << laneName(lane)
-                                 << " ord=" << ord << "\n");
+                                 << " ord=" << ord << " ordA=" << ordA << " ordB=" << ordB
+                                 << "\n");
         };
 
         if (ct == CT_VA_VDST) {
@@ -450,41 +490,60 @@ class WaitcntBrackets {
             });
     }
 
+    // Same-group follower count for a VM_VSRC producer stamp. A flat_* producer
+    // is in both groups; it benefits from followers in EITHER (whichever FIFO's
+    // in-order guarantee proves it done first ⇒ take the max). Non-member groups
+    // contribute 0.
+    unsigned vmFollowers(const VgprStamp& s) const {
+        unsigned fA = s.vmOrdA ? (vmGroupIssued[VM_GROUP_A] - s.vmOrdA) : 0u;
+        unsigned fB = s.vmOrdB ? (vmGroupIssued[VM_GROUP_B] - s.vmOrdB) : 0u;
+        return std::max(fA, fB);
+    }
+
     // Emit a wait for the hazard on VGPR `k` against counter `c`. The producer's
-    // (lane, ordinal) come from the stamp; the wait value is the same-lane
-    // follower count issued[lane]-ordinal.
-    //
-    // NOTE (Commit 1 — behavior-preserving refactor): when the counter has >=2
-    // sub-pipes pending (counterOutOfOrder) we still drain to 0, reproducing the
-    // legacy lumped emission exactly. The follower-count `f` is logged as the
-    // value the follow-up optimization will emit instead. In the single-pipe
-    // case f == the legacy ub-score, so output is unchanged.
+    // stamp gives the sub-pipe (VA_VDST) or ordering group (VM_VSRC) and the
+    // in-order position; the wait value is the same-pipe/same-group follower
+    // count. Other pipes/groups only inflate the shared HW counter, so the
+    // follower count is a safe upper bound in every case; the only drain is
+    // f==0 (producer is the last op of its pipe/group).
     void determineWait(CounterType c, const RegKey& k, Wait& wait, const char* role) const {
         auto it = scores.find(k);
         if (it == scores.end()) return;
         const VgprStamp& s = it->second;
-        Lane lane = (c == CT_VA_VDST) ? s.vaLane : s.vmLane;
-        unsigned ord = (c == CT_VA_VDST) ? s.vaOrdinal : s.vmOrdinal;
+
+        if (c == CT_VM_VSRC) {
+            // Per-ordering-group follower count. Group membership is by
+            // instruction type (flat_* ∈ both). If the producer is proven
+            // drained in every group it belongs to, no wait.
+            bool liveA = s.vmOrdA && s.vmOrdA > vmGroupFloor[VM_GROUP_A];
+            bool liveB = s.vmOrdB && s.vmOrdB > vmGroupFloor[VM_GROUP_B];
+            if (!liveA && !liveB) return;  // no producer / proven done
+            unsigned f = vmFollowers(s);
+            unsigned chosen = (f > 0) ? std::min(f, maxEmittableWait(c)) : 0u;
+            addWait(wait, c, chosen);
+            PASS_DEBUG(std::cerr
+                       << "[InsertWaitAlu]     wait hit vm_vsrc on v" << k.idx << "("
+                       << halfName(k.half) << "," << role << ") ordA=" << s.vmOrdA
+                       << " ordB=" << s.vmOrdB << " issuedA=" << vmGroupIssued[VM_GROUP_A]
+                       << " issuedB=" << vmGroupIssued[VM_GROUP_B] << " floorA="
+                       << vmGroupFloor[VM_GROUP_A] << " floorB=" << vmGroupFloor[VM_GROUP_B]
+                       << " f=" << f << " → wait=" << chosen << "\n");
+            return;
+        }
+
+        Lane lane = s.vaLane;
+        unsigned ord = s.vaOrdinal;
         if (ord == 0 || ord <= floor_[lane]) return;  // no producer / proven done
 
         unsigned f = issued[lane] - ord;  // same-lane followers, all still in flight
         bool ooo = counterOutOfOrder(c);
-        unsigned chosen;
-        if (c == CT_VA_VDST) {
-            // Per-pipe follower count is safe regardless of how many other VALU
-            // sub-pipes are pending: if the producer were still outstanding, all
-            // f of its same-pipe followers would be too (FIFO within a pipe), so
-            // the counter would exceed f. Other pipes only add to the total, so
-            // va_vdst(f) still guarantees the producer is done. This replaces the
-            // legacy "drain to 0 when >=2 pipes pending".
-            chosen = std::min(f, maxEmittableWait(c));
-        } else {
-            // vm_vsrc: keep the conservative multi-class drain. The in-order-
-            // within-class guarantee for LDS/FLAT/VMEM source reads is not
-            // confirmed from the spec, so a non-zero wait under mixed classes
-            // could be an unsafe WAR. Single class → same-lane follower count.
-            chosen = ooo ? 0u : std::min(f, maxEmittableWait(c));
-        }
+        // Per-pipe follower count is safe regardless of how many other VALU
+        // sub-pipes are pending: if the producer were still outstanding, all
+        // f of its same-pipe followers would be too (FIFO within a pipe), so
+        // the counter would exceed f. Other pipes only add to the total, so
+        // va_vdst(f) still guarantees the producer is done. This replaces the
+        // legacy "drain to 0 when >=2 pipes pending".
+        unsigned chosen = std::min(f, maxEmittableWait(c));
         addWait(wait, c, chosen);
 
         PASS_DEBUG(
@@ -518,6 +577,16 @@ class WaitcntBrackets {
                                  << oldFloor << "→" << floor_[L] << " issued=" << issued[L]
                                  << "\n");
         }
+        // A vm_vsrc(count) bounds the TOTAL outstanding across both groups, so at
+        // most `count` remain in any single group ⇒ each group's floor rises to
+        // issued-count. Conservative (never over-raises): count==0 drains both.
+        if (c == CT_VM_VSRC) {
+            for (int g = 0; g < NUM_VM_GROUPS; ++g) {
+                unsigned newFloor =
+                    vmGroupIssued[g] >= count ? vmGroupIssued[g] - count : 0u;
+                if (newFloor > vmGroupFloor[g]) vmGroupFloor[g] = newFloor;
+            }
+        }
         if (count == 0) pendingEvents = pendingEvents & ~eventsForCounter(c);
     }
 
@@ -539,6 +608,21 @@ class WaitcntBrackets {
             issued[L] = newIssued;
         }
 
+        // Same widening for the VM_VSRC ordering-group counts, so the group
+        // ordinals stamped in each predecessor stay comparable after the join.
+        std::array<unsigned, NUM_VM_GROUPS> gMyShift{}, gOtherShift{}, gMyOldFloor{},
+            gOtherOldFloor{};
+        for (int g = 0; g < NUM_VM_GROUPS; ++g) {
+            unsigned mineIF = vmGroupIssued[g] - vmGroupFloor[g];
+            unsigned otherIF = other.vmGroupIssued[g] - other.vmGroupFloor[g];
+            unsigned newIssued = vmGroupFloor[g] + std::max(mineIF, otherIF);
+            gMyOldFloor[g] = vmGroupFloor[g];
+            gOtherOldFloor[g] = other.vmGroupFloor[g];
+            gMyShift[g] = newIssued - vmGroupIssued[g];
+            gOtherShift[g] = newIssued - other.vmGroupIssued[g];
+            vmGroupIssued[g] = newIssued;
+        }
+
         for (const auto& [k, _] : other.scores) scores.try_emplace(k);
 
         for (auto& [k, s] : scores) {
@@ -548,6 +632,10 @@ class WaitcntBrackets {
                       myShift, otherShift, myOldFloor, otherOldFloor, strictDom);
             mergeSide(s.vmLane, s.vmOrdinal, o ? o->vmLane : LANE_LDS, o ? o->vmOrdinal : 0,
                       myShift, otherShift, myOldFloor, otherOldFloor, strictDom);
+            mergeGroupOrd(s.vmOrdA, o ? o->vmOrdA : 0, VM_GROUP_A, gMyShift, gOtherShift,
+                          gMyOldFloor, gOtherOldFloor, strictDom);
+            mergeGroupOrd(s.vmOrdB, o ? o->vmOrdB : 0, VM_GROUP_B, gMyShift, gOtherShift,
+                          gMyOldFloor, gOtherOldFloor, strictDom);
         }
 
         if (!pendingEvents.containsAll(other.pendingEvents)) strictDom = true;
@@ -581,8 +669,33 @@ class WaitcntBrackets {
         }
     }
 
+    // Merge one VM_VSRC ordering-group ordinal of a VGPR stamp. Fixed group `g`
+    // (unlike VA lanes, group membership is by instruction type, not tracked in
+    // the stamp), so only the ordinal shifts. Keep the later (more conservative)
+    // producer position.
+    static void mergeGroupOrd(unsigned& myOrd, unsigned oOrd, VMGroup g,
+                              const std::array<unsigned, NUM_VM_GROUPS>& myShift,
+                              const std::array<unsigned, NUM_VM_GROUPS>& otherShift,
+                              const std::array<unsigned, NUM_VM_GROUPS>& myOldFloor,
+                              const std::array<unsigned, NUM_VM_GROUPS>& otherOldFloor,
+                              bool& strictDom) {
+        unsigned myS = (myOrd && myOrd > myOldFloor[g]) ? myOrd + myShift[g] : 0;
+        unsigned oS = (oOrd && oOrd > otherOldFloor[g]) ? oOrd + otherShift[g] : 0;
+        if (oS > myS) {
+            myOrd = oS;
+            strictDom = true;
+        } else {
+            myOrd = myS;
+        }
+    }
+
     std::array<unsigned, NUM_LANES> issued = {};
     std::array<unsigned, NUM_LANES> floor_ = {};
+    // VM_VSRC per-ordering-group issued/floor. Parallel to issued/floor_ but
+    // indexed by VMGroup, because flat_* bumps both groups at once (which the
+    // per-lane arrays cannot express). Consulted only on the vm_vsrc decision.
+    std::array<unsigned, NUM_VM_GROUPS> vmGroupIssued = {};
+    std::array<unsigned, NUM_VM_GROUPS> vmGroupFloor = {};
     WaitEventSet pendingEvents;
     std::unordered_map<RegKey, VgprStamp, RegKeyHash> scores;
 };
