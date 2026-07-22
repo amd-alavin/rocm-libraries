@@ -663,6 +663,30 @@ void insertBroadcastTensorDrainBefore(IRBase* anchor, AsmIRBuilder& irBuilder, G
         CommentData{"drain StreamKMulticast cooperative broadcast before cluster-scope round"});
 }
 
+/// Emit `s_wait_tensorcnt 0` immediately before \p anchor, where \p anchor is
+/// the instruction right after a cooperative `tensor_load_to_lds` group. Under
+/// PGR>=2 the cluster/broadcast round runs at the TOP of the mainloop, so the
+/// pre-round broadcast drain (`insertBroadcastTensorDrainBefore`) only retires
+/// the PREVIOUS iteration's load -- one iteration too late for the consumer
+/// that reads the freshly cooperatively-loaded LDS half at the next loop head
+/// (the producing wave is a peer wave, so the consumer's own tensor counter is
+/// already zero and cannot order the peer's async write). Draining right after
+/// the load issues makes the cooperative broadcast coherent before the back
+/// edge, so the publishing workgroup barrier at the next loop head correctly
+/// orders it for the consuming waves. Matches PGR1, which drains each load in
+/// its own iteration.
+void insertProducerTensorDrainBefore(IRBase* anchor, AsmIRBuilder& irBuilder, GfxArchID archId) {
+    const HwInstDesc* waitDesc = getMCIDByUOp(GFX::s_wait_tensorcnt, archId);
+    assert(waitDesc && "s_wait_tensorcnt opcode is not supported on this architecture");
+    StinkyInstruction* w = irBuilder.create(waitDesc, anchor);
+    w->addSrcReg(StinkyRegister(0));
+    SWaitTensorCntData d;
+    d.tlcnt = 0;
+    w->addModifier<SWaitTensorCntData>(d);
+    w->addModifier<CommentData>(
+        CommentData{"retire cooperative tensor_load_to_lds before back-edge (PGR>=2 coherence)"});
+}
+
 /// \p pgrValue and \p lclPreDecrement are consulted by mode (b) only.
 /// \p streamKMulticast, combined with \p pgrValue >= 2, gates the per-iteration
 /// broadcast drain in mode (c) (the mainloop Rule 4 handshake only).
@@ -881,6 +905,10 @@ class InsertClusterBarrierPassImpl : public Pass {
                 std::tuple<StinkyInstruction*, BasicBlock::iterator, StinkyInstruction*, int>>
                 pending;
             std::unordered_set<StinkyInstruction*> seenTriggers;
+            // Anchors (instruction right after each cooperative tensor_load
+            // group) for the mode-(c) producer-side drain; see
+            // insertProducerTensorDrainBefore.
+            std::vector<IRBase*> producerDrainAnchors;
 
             auto segBegin = bb.begin();
             for (auto it = bb.begin(); it != bb.end(); ++it) {
@@ -916,6 +944,27 @@ class InsertClusterBarrierPassImpl : public Pass {
                     sumLoopCounterLDecrementsBeforeInSegment(segBegin, trigger);
                 pending.emplace_back(trigger, std::next(BasicBlock::iterator(trigger)), liveLclCmp,
                                      lclPreDecrement);
+
+                // Mode (c) only: record the instruction right after this
+                // cooperative tensor_load group so a producer-side tensor
+                // drain can be planted there (retire the load before the back
+                // edge / next publishing barrier). Advance past any
+                // immediately-following tensor_load(s) so the drain covers the
+                // whole group (e.g. the A/B operand load plus its MX-scale
+                // load) rather than landing between them.
+                if (kRule4ForceUngatedSignalMode && streamKMulticast_ && pgrValue_ >= 2) {
+                    auto postIt = std::next(it);
+                    while (postIt != bb.end()) {
+                        auto* pinst = dyn_cast<StinkyInstruction>(postIt.getNodePtr());
+                        if (pinst != nullptr && isTensorLoad(*pinst)) {
+                            ++postIt;
+                            continue;
+                        }
+                        break;
+                    }
+                    producerDrainAnchors.push_back(
+                        (postIt != bb.end()) ? postIt.getNodePtr() : nullptr);
+                }
             }
 
             // Rule 1: signal-only handshake immediately AFTER each
@@ -1131,6 +1180,12 @@ class InsertClusterBarrierPassImpl : public Pass {
                                                     liveLclCmp, lclPreDecrement,
                                                     streamKMulticast_);
                 (void)trigger;  // queued for ordering only; insertion uses `anchor`
+            }
+            // Mode (c): producer-side drain right after each cooperative
+            // tensor_load group (retire the async cooperative load before the
+            // back-edge so the next loop-head barrier publishes it coherently).
+            for (IRBase* postAnchor : producerDrainAnchors) {
+                insertProducerTensorDrainBefore(postAnchor, irBuilder, archId);
             }
             for (IRBase* anchor : gsu1Anchors) {
                 insertLoopCounterLGatedClusterBarrierSignalBefore(
