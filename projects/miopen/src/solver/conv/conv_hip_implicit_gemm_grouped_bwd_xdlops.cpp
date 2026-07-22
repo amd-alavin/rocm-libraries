@@ -132,12 +132,9 @@ struct CKArgs
     {
         (void)alpha;
         (void)beta;
-#if MIOPEN_CK_LARGE_TENSOR_BWD_WRW
         // Large-tensor (>INT_MAX element stride) instances expose CK's int64
         // long_index_t MakeArgumentPointer overload; bind it with the int64
-        // member arrays directly (they outlive the returned arg_ptr). Enabled:
-        // the container CK ships this overload + Large_Tensor grouped bwd-data
-        // instances (ROCm/rocm-libraries PR #9258).
+        // member arrays directly (they outlive the returned arg_ptr).
         if(IsLargeTensorCKInstance(conv_ptr))
         {
             return conv_ptr->MakeArgumentPointer(out,
@@ -161,7 +158,6 @@ struct CKArgs
                                                  {},
                                                  split_k);
         }
-#endif
         // Sub-INT_MAX shapes: narrow to int32 at the boundary. The narrowed
         // bundle is a mutable member of CKArgs (populated by
         // GetNarrowedArrays) so its arrays outlive any arg_ptr referencing

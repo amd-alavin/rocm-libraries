@@ -20,18 +20,6 @@ namespace miopen {
 namespace solver {
 
 // ---------------------------------------------------------------------------
-// MIOPEN_CK_LARGE_TENSOR_BWD_WRW — gates whether BWD/WRW MakeArgPtr binds CK's
-// int64 long_index_t MakeArgumentPointer overload for Large_Tensor instances.
-//
-// Enabled: the container CK now ships the long_index_t MakeArgumentPointer
-// overloads and Large_Tensor device-op instances for grouped-conv BWD-data and
-// WRW (ROCm/rocm-libraries PR #9258, which supersedes #7734/#8518), matching
-// the FWD path. The gate is retained as an override hook but defaults on.
-#ifndef MIOPEN_CK_LARGE_TENSOR_BWD_WRW
-#define MIOPEN_CK_LARGE_TENSOR_BWD_WRW 1
-#endif
-
-// ---------------------------------------------------------------------------
 // ToCKIndexArray — narrow a long_index_t array to a ck::index_t (int32) array.
 //
 // Used on the sub-INT_MAX MakeArgPtr path, where CK's int32

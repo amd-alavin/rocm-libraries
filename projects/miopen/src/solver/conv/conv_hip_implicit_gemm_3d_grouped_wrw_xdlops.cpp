@@ -159,10 +159,9 @@ struct CKArgs
     // for kernels that survived the RequiresLargeTensorCKInstance filter. The
     // bundle is a mutable member so its arrays outlive any arg_ptr that
     // captures references to them. Large-tensor (>INT_MAX) shapes never
-    // reach here when MIOPEN_CK_LARGE_TENSOR_BWD_WRW is enabled:
-    // MakeDefaultArgPtr binds CK's int64 long_index_t overload directly for
-    // those instances, and the Bilinear/Scale MultipleD ops are int32-only
-    // and filtered out upstream.
+    // reach here: MakeDefaultArgPtr binds CK's int64 long_index_t overload
+    // directly for those instances, and the Bilinear/Scale MultipleD ops are
+    // int32-only and filtered out upstream.
     const NarrowedCKArrays3D& NarrowedArrays() const
     {
         narrowed = MakeNarrowedCKArrays<NarrowedCKArrays3D>(in_lengths,
@@ -245,15 +244,12 @@ struct CKArgs
     auto MakeDefaultArgPtr(
         const ConvPtr& conv_ptr, ConstData_t x, Data_t dw, ConstData_t dy, int split_k) const
     {
-#if MIOPEN_CK_LARGE_TENSOR_BWD_WRW
         // Large-tensor (>INT_MAX element stride) instances expose CK's int64
         // long_index_t MakeArgumentPointer overload; bind it with the int64
         // member arrays directly (they outlive the returned arg_ptr). Only
         // the single-D Default device op exposes the int64 overload; the
         // Bilinear/Scale MultipleD ops are int32-only and unreachable on
-        // overflow shapes (RequiresLargeTensorCKInstance). Enabled: the
-        // container CK ships this overload + Large_Tensor grouped wrw
-        // instances (ROCm/rocm-libraries PR #9258).
+        // overflow shapes (RequiresLargeTensorCKInstance).
         if(IsLargeTensorCKInstance(conv_ptr))
         {
             return conv_ptr->MakeArgumentPointer(x,
@@ -274,7 +270,6 @@ struct CKArgs
                                                  PassThrough{},
                                                  split_k);
         }
-#endif
         const auto& a = NarrowedArrays();
         return conv_ptr->MakeArgumentPointer(x,
                                              dw,

@@ -233,8 +233,7 @@ struct CKArgs
     // its arrays outlive any arg_ptr that captures references to them.
     // Large-tensor (>INT_MAX) instances instead bind the int64 long_index_t
     // overload directly from the int64 members (see the
-    // IsLargeTensorCKInstance branch in MakeDefaultArgPtr, guarded by
-    // MIOPEN_CK_LARGE_TENSOR_BWD_WRW).
+    // IsLargeTensorCKInstance branch in MakeDefaultArgPtr).
     const NarrowedCKArrays3D& NarrowedArrays() const
     {
         narrowed = MakeNarrowedCKArrays<NarrowedCKArrays3D>(in_lengths,
@@ -317,12 +316,9 @@ struct CKArgs
     template <typename ConvPtr>
     auto MakeDefaultArgPtr(const ConvPtr& conv_ptr, Data_t in, ConstData_t w, ConstData_t out) const
     {
-#if MIOPEN_CK_LARGE_TENSOR_BWD_WRW
         // Large-tensor (>INT_MAX element stride) instances expose CK's int64
         // long_index_t MakeArgumentPointer overload; bind it with the int64
-        // member arrays directly (they outlive the returned arg_ptr). Enabled:
-        // the container CK ships this overload + Large_Tensor grouped bwd-data
-        // instances (ROCm/rocm-libraries PR #9258).
+        // member arrays directly (they outlive the returned arg_ptr).
         if(IsLargeTensorCKInstance(conv_ptr))
         {
             return conv_ptr->MakeArgumentPointer(out,
@@ -345,7 +341,6 @@ struct CKArgs
                                                  PassThrough{},
                                                  PassThrough{});
         }
-#endif
         const auto& a = NarrowedArrays();
         return conv_ptr->MakeArgumentPointer(out,
                                              w,
