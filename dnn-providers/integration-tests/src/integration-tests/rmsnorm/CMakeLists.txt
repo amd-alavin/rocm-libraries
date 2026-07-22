@@ -7,3 +7,8 @@ if(BUILD_CPP_GRAPH_TESTS)
             IntegrationGpuRMSNorm.cpp
     )
 endif()
+
+target_sources(${INTEGRATION_TESTS_EXE}
+    PRIVATE
+        IntegrationGpuRMSNormBackward.cpp
+)
