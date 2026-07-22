@@ -365,6 +365,37 @@ def clusterEnabled(clusterDim):
     """True when a workgroup cluster is requested (ClusterDim [x, y] is not [1, 1])."""
     return (clusterDim[0] * clusterDim[1]) != 1
 
+def streamKClusterFactors(d):
+    """Return (Cs, Ck, C, is2D) for a StreamK workgroup cluster.
+
+    Two schemes, distinguished by ``ClusterDim[1]``:
+
+      * 1-D legacy path (ClusterDim = [C, 1] + StreamKClusterKSplit): the HW
+        cluster is 1-D of size C = ClusterDim[0]; the K-split factor is the
+        separate solution parameter Ck = StreamKClusterKSplit, and the spatial
+        multicast count is Cs = C // Ck. This is the shipped factored/multicast/
+        reduction path -- it MUST stay byte-identical.
+
+      * 2-D probe path (ClusterDim = [Cs, Ck] with Ck = ClusterDim[1] > 1): a
+        genuine 2-D HW cluster. Cs = ClusterDim[0] is the spatial B-multicast
+        axis (X), Ck = ClusterDim[1] is the K-split reduction axis (Y), and the
+        total cluster is C = Cs * Ck. StreamKClusterKSplit is NOT consulted here
+        (it stays at its default) -- both factors come purely from ClusterDim.
+        This is the Scheme-A HW-validation probe; it is the ONLY case where
+        ClusterDim[1] > 1 for StreamK. See docs/design/streamk-wg-clusters.md.
+
+    ``d`` may be a kernel or a partially-derived solution ``state`` dict; both
+    expose "ClusterDim" and (optionally) "StreamKClusterKSplit".
+    """
+    cd = d["ClusterDim"]
+    if cd[1] > 1:
+        cs, ck = cd[0], cd[1]
+        return cs, ck, cs * ck, True
+    c = cd[0]
+    ck = d.get("StreamKClusterKSplit", 1)
+    cs = c // ck if ck > 0 and c % ck == 0 else 0
+    return cs, ck, c, False
+
 def log2(x):
     return int(log(x, 2) + 0.5)
 

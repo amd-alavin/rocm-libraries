@@ -259,15 +259,31 @@ class TestValidation:
             assert st["StreamKMulticast"] == 1
             assert st["StreamKXCCMapping"] == 0, st["StreamKXCCMapping"]
 
-    def test_reject_non_1d_cluster(self, tmp_path):
-        # ClusterDim = [2, 2] is not the [C, 1] spatial DP cluster.
+    def test_accept_2d_cluster_probe(self, tmp_path):
+        # 2-D StreamK cluster PROBE (Scheme A): ClusterDim = [2, 2] is now a
+        # SUPPORTED genuine 2-D cluster (Cs=2 spatial B-multicast x Ck=2 K-split
+        # reduction), no longer the pre-probe [C,1]-only reject. It derives valid
+        # solutions with StreamKMulticast (Cs>1) and StreamKClusterReduction (Ck>1)
+        # both auto-enabled.
         cfg = _write_variant(tmp_path, "cd22.yaml",
                              fork_overrides={"ClusterDim": [[2, 2]]})
-        assert _derive_states(cfg) == []
+        states = _derive_states(cfg)
+        assert states, "expected >=1 derived solution for the 2-D cluster probe"
+        for st in states:
+            assert st["ClusterDim"] == [2, 2]
+            assert st["StreamKMulticast"] == 1, st.get("StreamKMulticast")
+            assert st["StreamKClusterReduction"] == 1, st.get("StreamKClusterReduction")
 
     def test_reject_non_pow2_cluster(self, tmp_path):
         cfg = _write_variant(tmp_path, "cd3.yaml",
                              fork_overrides={"ClusterDim": [[3, 1]]})
+        assert _derive_states(cfg) == []
+
+    def test_reject_non_pow2_2d_cluster(self, tmp_path):
+        # A genuinely-unsupported 2-D shape (Ck=3 not a power of two) is still
+        # rejected: the probe only relaxes to POWER-OF-TWO Cs/Ck with C=Cs*Ck<=16.
+        cfg = _write_variant(tmp_path, "cd23.yaml",
+                             fork_overrides={"ClusterDim": [[2, 3]]})
         assert _derive_states(cfg) == []
 
     # NB: C > 16 is not an expressible ClusterDim (validParameters caps

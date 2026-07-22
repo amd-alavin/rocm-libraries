@@ -599,10 +599,19 @@ class ProblemPredicate(Properties.Predicate):
         clusterX = state["ClusterDim"][0]
         ck = state.get("StreamKClusterKSplit", 1)
         if state.get("StreamKMulticast", 0) and ck >= 1 and clusterX % ck == 0:
+            # For the 2-D StreamK cluster PROBE, ClusterDim[0] IS Cs and Ck stays 1,
+            # so this yields Cs directly (== the spatial multicast peer count).
             valuepredicates.append(clusterX // ck)
         else:
             valuepredicates.append(clusterX)
-        valuepredicates.append(state["ClusterDim"][1])
+        # value[4] is the N-tile divisor. For the 2-D StreamK cluster PROBE the
+        # cluster Y-extent (Ck=ClusterDim[1]) is a K-split / index-generation axis,
+        # NOT an N-tiling axis, so it must NOT constrain the N-tile grid -> pin to 1.
+        # 1-D StreamK ([C,1]) and dense clusters keep ClusterDim[1] (byte-identical).
+        if state.get("StreamK", 0) == 3 and state["ClusterDim"][1] > 1:
+            valuepredicates.append(1)
+        else:
+            valuepredicates.append(state["ClusterDim"][1])
         rv += [cls('ClusterDimCheck', value=valuepredicates)]
 
         # StreamK cluster-reduction split-barrier safety (gfx1250). The C =
@@ -618,10 +627,18 @@ class ProblemPredicate(Properties.Predicate):
         # mode is StreamKClusterKSplit rather than the full cluster C. For the
         # legacy pure-reduction opt-in (StreamKClusterReduction=1 without an
         # explicit K-split) Ck == C, so value[1] is byte-identical to before.
-        if state.get("StreamKClusterReduction", 0) and state["ClusterDim"][0] > 1:
-            ckIter = state.get("StreamKClusterKSplit", 1)
-            if ckIter <= 1:
-                ckIter = state["ClusterDim"][0]
+        # For the 2-D StreamK cluster PROBE, Ck = ClusterDim[1] and the whole
+        # cluster C = Cs*Ck > 1 (the guard uses the product so pure-reduction
+        # [1, Ck] is covered). 1-D path: ClusterDim[1]==1 so the product reduces to
+        # ClusterDim[0] and ckIter comes from StreamKClusterKSplit (byte-identical).
+        cd = state["ClusterDim"]
+        if state.get("StreamKClusterReduction", 0) and (cd[0] * cd[1]) > 1:
+            if cd[1] > 1:
+                ckIter = cd[1]
+            else:
+                ckIter = state.get("StreamKClusterKSplit", 1)
+                if ckIter <= 1:
+                    ckIter = cd[0]
             rv += [cls('ClusterReductionIterCheck',
                        value=[state["DepthU"], ckIter])]
 

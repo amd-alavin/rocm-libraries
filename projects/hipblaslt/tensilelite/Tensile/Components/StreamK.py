@@ -36,13 +36,37 @@ from rocisa.functions import scalarStaticDivideAndRemainder, sMagicDiv2, \
 
 from .Subtile.SubtileLREmit import localReadResetOffsetsSubtile
 
-from ..Common import print2, ceilDivide, log2, clusterEnabled
+from ..Common import print2, ceilDivide, log2, clusterEnabled, streamKClusterFactors
 from ..Component import Component
 from ..AsmStoreState import StoreState, VectorDataTypes
 from ..AsmAddressCalculation import AddrCalculation
 import abc
 
 from copy import deepcopy
+
+# ======================================================================
+# 2-D StreamK cluster PROBE (Scheme A) -- lane-order flip point
+# ======================================================================
+# THE single, easily-flippable assumption this HW-validation probe exists to
+# test: the physical within-cluster lane linearization of a genuine 2-D HW
+# cluster ClusterDim = [Cs, Ck].
+#
+#   STREAMK_2D_LANE_X_FASTEST = True  (hypothesis):
+#     lane index = wg_x + wg_y*Cs  (X fastest). Under this ordering the Cs
+#     spatial B-multicast peers sharing a given K/Y rank k = wg_y are a
+#     CONTIGUOUS run, so the B-multicast mask is
+#         maskB = ((1 << Cs) - 1) << (k * Cs).
+#
+#   STREAMK_2D_LANE_X_FASTEST = False (fallback if HW disproves the above):
+#     lane index = wg_y + wg_x*Ck  (Y/K fastest) -- the SAME layout the shipped
+#     1-D factored mask uses, so
+#         maskB = (OR_{s' in [0,Cs)} 1 << (s'*Ck)) << k.
+#
+# If the [Cs,Ck] probe miscomputes on real gfx1250, flip this ONE flag to False
+# and rebuild -- no other edit is needed to switch the mask layout. This flag is
+# consumed ONLY by streamKFactoredMaskCompute below and has NO effect on the 1-D
+# ClusterDim=[C,1] path (that path never reaches the 2-D branch).
+STREAMK_2D_LANE_X_FASTEST = True
 
 class XCCMapping(Component):
     """
@@ -1620,7 +1644,9 @@ class StreamK(Component):
         (deadlock-safe). See docs/design/streamk-wg-clusters.md.
         """
         module = Module("StreamK cluster intra-cluster check")
-        C = kernel["ClusterDim"][0]
+        # Whole-cluster size C. 1-D path: C = ClusterDim[0] (byte-identical). 2-D
+        # probe: C = Cs*Ck (the split barrier spans every co-resident WG).
+        _, _, C, _ = streamKClusterFactors(kernel)
         skConstsInVgprs = writer.isStreamKConstantsToVgprEnabled(kernel)
         sClusterLast = writer.sgprPool.checkOut(1, "SKClusterLast")
         sIdx = writer.acquireStreamKConstSgpr(kernel, "StreamKIdx")
@@ -2693,15 +2719,29 @@ class StreamKTwoTileDPFirst(StreamK):
         module = Module("StreamK factored multicast mask compute")
         if not kernel.get("StreamKMulticast", 0):
             return module
-        c = kernel["ClusterDim"][0]
-        ck = kernel.get("StreamKClusterKSplit", 1)
-        cs = c // ck
-        # maskB_base: Cs bits at stride Ck (compile-time constant).
-        maskBBase = 0
-        for sPrime in range(cs):
-            maskBBase |= (1 << (sPrime * ck))
-        module.addComment0(
-            "StreamKFactored: B-multicast along Cs=%d peers (stride Ck=%d), maskB_base=0x%x" % (cs, ck, maskBBase))
+        # Cs/Ck/C factoring. 1-D path: C=ClusterDim[0], Ck=StreamKClusterKSplit,
+        # Cs=C//Ck (byte-identical to the shipped code). 2-D probe: Cs=ClusterDim[0],
+        # Ck=ClusterDim[1], C=Cs*Ck.
+        cs, ck, C, is2d = streamKClusterFactors(kernel)
+        # --- B-multicast mask layout (see STREAMK_2D_LANE_X_FASTEST flip point) ---
+        # The Cs spatial peers sharing this WG's K/Y rank k must be selected in the
+        # PHYSICAL within-cluster lane order. 1-D and the 2-D y-fastest fallback use
+        # the stride-Ck layout (maskB_base<<k); the 2-D x-fastest hypothesis uses a
+        # contiguous Cs-bit run shifted by k*Cs. shiftScaleLog2 scales k -> k*Cs.
+        xFastest = is2d and STREAMK_2D_LANE_X_FASTEST
+        if xFastest:
+            maskBBase = (1 << cs) - 1
+            shiftScaleLog2 = log2(cs) if cs > 1 else 0
+            module.addComment0(
+                "StreamK2D(x-fastest): B-multicast across Cs=%d contiguous peers, maskB_base=0x%x, shift=k*Cs" % (cs, maskBBase))
+        else:
+            # maskB_base: Cs bits at stride Ck (compile-time constant).
+            maskBBase = 0
+            for sPrime in range(cs):
+                maskBBase |= (1 << (sPrime * ck))
+            shiftScaleLog2 = 0
+            module.addComment0(
+                "StreamKFactored: B-multicast along Cs=%d peers (stride Ck=%d), maskB_base=0x%x" % (cs, ck, maskBBase))
         skConstsInVgprs = writer.isStreamKConstantsToVgprEnabled(kernel)
         mcInvalid = Label(writer.labels.getNameInc("SKFC_Invalid"), "")
         mcEnd = Label(writer.labels.getNameInc("SKFC_End"), "")
@@ -2716,6 +2756,10 @@ class StreamKTwoTileDPFirst(StreamK):
                 module.add(VReadfirstlaneB32(dst=sgpr(sIdx), src=vgpr(writer.states.skConstVgprs["StreamKIdx"])))
             module.add(SAndB32(dst=sgpr(tk), src0=sgpr(sIdx), src1=hex(ck - 1),
                                comment="k = StreamKIdx & (Ck-1) (K-slice rank)"))
+            if shiftScaleLog2:
+                # x-fastest: the Cs contiguous peers sharing k start at lane k*Cs.
+                module.add(SLShiftLeftB32(dst=sgpr(tk), shiftHex=shiftScaleLog2, src=sgpr(tk),
+                                          comment="x-fastest: shift = k*Cs"))
             # cond1: nWG0 % Cs == 0 (Cs is a power of two)
             module.add(SAndB32(dst=sgpr(t0), src0=sgpr("NumWorkGroups0"), src1=hex(cs - 1),
                                comment="nWG0 %% Cs (Cs power of two)"))
@@ -2723,10 +2767,10 @@ class StreamKTwoTileDPFirst(StreamK):
             module.add(SCBranchSCC0(labelName=mcInvalid.getLabelName(),
                                     comment="unaligned M -> B not shared, load normally"))
             # cond2: clusterBase + C <= Ck * totalTiles
-            module.add(SAndB32(dst=sgpr(t2), src0=sgpr(sIdx), src1=hex((~(c - 1)) & 0xFFFFFFFF),
+            module.add(SAndB32(dst=sgpr(t2), src0=sgpr(sIdx), src1=hex((~(C - 1)) & 0xFFFFFFFF),
                                comment="clusterBase = StreamKIdx & ~(C-1)"))
             writer.releaseStreamKConstSgpr(sIdx)
-            module.add(SAddU32(dst=sgpr(t2), src0=sgpr(t2), src1=hex(c), comment="clusterBase + C"))
+            module.add(SAddU32(dst=sgpr(t2), src0=sgpr(t2), src1=hex(C), comment="clusterBase + C"))
             module.add(SMulI32(dst=sgpr(t1), src0=sgpr("NumWorkGroups0"), src1=sgpr("NumWorkGroups1"),
                                comment="totalTiles = nWG0 * nWG1"))
             module.add(SMulI32(dst=sgpr(t1), src0=sgpr(t1), src1=hex(ck),
@@ -2735,7 +2779,7 @@ class StreamKTwoTileDPFirst(StreamK):
                                  comment="cluster fully populated? clusterBase+C <= Ck*totalTiles"))
             module.add(SCBranchSCC0(labelName=mcInvalid.getLabelName(),
                                     comment="partial cluster -> B loaded normally (self-only mask)"))
-            # valid: MulticastMaskB = maskB_base << k (Cs peers sharing k)
+            # valid: MulticastMaskB = maskB_base << (k or k*Cs) (Cs peers sharing k)
             module.add(SLShiftLeftB32(dst=sgpr("MulticastMaskB"), shiftHex=sgpr(tk), src=hex(maskBBase),
                                       comment="MulticastMaskB = maskB_base << k (Cs s-peers, same K-slice)"))
             module.add(SBranch(labelName=mcEnd.getLabelName(),
@@ -2772,9 +2816,12 @@ class StreamKTwoTileDPFirst(StreamK):
             return module
         c = kernel["ClusterDim"][0]
         ck = kernel.get("StreamKClusterKSplit", 1)
-        if ck > 1:
-            # Factored 2-D cluster mode: multicast runs only along the Cs spatial
-            # axis (peers sharing the same K-slice k), not the whole C cluster.
+        _, _, _, is2d = streamKClusterFactors(kernel)
+        if is2d or ck > 1:
+            # Factored/2-D cluster: multicast runs only along the Cs spatial axis
+            # (peers sharing the same K-slice k), not the whole C cluster. The 1-D
+            # factored path is Ck=StreamKClusterKSplit>1; the 2-D probe is any
+            # ClusterDim[1]>1. Ck==1 1-D keeps the pure-multicast path below.
             return self.streamKFactoredMaskCompute(writer, kernel)
         module.addComment0("StreamKMulticast: gate B-broadcast on clusterMulticastValid")
         skConstsInVgprs = writer.isStreamKConstantsToVgprEnabled(kernel)
@@ -2929,6 +2976,22 @@ class StreamKTwoTileDPFirst(StreamK):
             module.add(SMovB32(dst=sgpr("WorkGroup0"), src="ttmp9", comment="workaround"))
             module.add(SAndB32(dst=sgpr("WorkGroup1"), src0=hex(0xFFFF), src1="ttmp7", comment="workaround"))
             module.add(SLShiftRightB32(dst=sgpr("WorkGroup2"), shiftHex=hex(0x10), src="ttmp7", comment="workaround"))
+
+        # 2-D StreamK cluster PROBE (Scheme A): the K-split axis is the genuine HW
+        # cluster Y rank (WorkGroup1 in [0, Ck)). The launch grid is 2-D
+        # [skGrid/Ck, Ck, 1], so fold the Y rank into the linear StreamK index:
+        #   StreamKIdx = WorkGroup0*Ck + WorkGroup1   (k = WorkGroup1 fastest)
+        # This keeps StreamKIdx a dense unique index whose (s,k) decode matches
+        # the 1-D [C,1] scheme (StreamKIdx & (Ck-1) = wg_y = k, StreamKIdx & (C-1)
+        # = wg_x*Ck + wg_y = within-cluster rank). The fold is written into
+        # WorkGroup0 so the existing SMov/VMov below (unchanged) still copies the
+        # final index -> the 1-D Ck==1 path is byte-identical.
+        cs2d, ck2d, C2d, is2d = streamKClusterFactors(kernel)
+        if is2d:
+            module.add(SMulI32(dst=sgpr("WorkGroup0"), src0=sgpr("WorkGroup0"), src1=hex(ck2d),
+                               comment="2-D cluster: WorkGroup0 * Ck"))
+            module.add(SAddU32(dst=sgpr("WorkGroup0"), src0=sgpr("WorkGroup0"), src1=sgpr("WorkGroup1"),
+                               comment="2-D cluster: StreamKIdx = WorkGroup0*Ck + WorkGroup1 (K/Y rank)"))
 
         if skConstsInVgprs:
             module.add(VMovB32(dst=vgpr(self._skv(writer, "StreamKIdx")), src=sgpr("WorkGroup0"),
