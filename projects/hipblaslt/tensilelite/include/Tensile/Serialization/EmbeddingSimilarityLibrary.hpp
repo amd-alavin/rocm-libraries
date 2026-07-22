@@ -283,89 +283,52 @@ namespace TensileLite
                         mappingIndices.push_back(pair.first);
 
                     iot::mapRequired(io, "table", mappingIndices);
+                    return;
                 }
-                else
-                {
-                    iot::mapRequired(io, "table", mappingIndices);
-                    if(mappingIndices.empty())
-                        iot::setError(io,
-                                      "EmbeddingSimilarityLibrary requires non empty "
-                                      "mapping index set.");
 
-                    for(int index : mappingIndices)
+                iot::mapRequired(io, "table", mappingIndices);
+                if(mappingIndices.empty())
+                    iot::setError(io,
+                                  "EmbeddingSimilarityLibrary requires non empty "
+                                  "mapping index set.");
+
+                for(int index : mappingIndices)
+                {
+                    auto slnIter = ctx->solutions->find(index);
+                    if(slnIter == ctx->solutions->end())
                     {
-                        auto slnIter = ctx->solutions->find(index);
-                        if(slnIter == ctx->solutions->end())
-                        {
-                            iot::setError(
-                                io,
-                                concatenate("[EmbeddingSimilarityLibrary] Invalid solution index: ",
-                                            index));
-                        }
-                        else
-                        {
-                            auto solution = slnIter->second;
-                            lib.solutionmap.insert(std::make_pair(index, solution));
-                            lib.solutions.push_back(solution);
-                        }
+                        iot::setError(
+                            io,
+                            concatenate("[EmbeddingSimilarityLibrary] Invalid solution index: ",
+                                        index));
+                    }
+                    else
+                    {
+                        auto solution = slnIter->second;
+                        lib.solutionmap.insert(std::make_pair(index, solution));
+                        lib.solutions.push_back(solution);
                     }
                 }
 
-                std::shared_ptr<EmbeddingSimilarity::Encoder> encoder;
-                if(iot::outputting(io))
-                {
-                    encoder = std::dynamic_pointer_cast<EmbeddingSimilarity::Encoder>(lib.encoder);
-                }
-                else
-                {
-                    encoder     = std::make_shared<EmbeddingSimilarity::Encoder>();
-                    lib.encoder = encoder;
-                }
-                iot::mapRequired(io, "encoder", *encoder);
+                auto encoder     = std::make_shared<EmbeddingSimilarity::Encoder>();
+                lib.encoder      = encoder;
+                iot::mapOptional(io, "encoder", *encoder);
 
-                std::shared_ptr<TensileLite::EmbeddingSimilarity::SolutionEmbeddings> embeddings;
-                if(iot::outputting(io))
-                {
-                    embeddings = std::dynamic_pointer_cast<
-                        TensileLite::EmbeddingSimilarity::SolutionEmbeddings>(lib.embeddings);
-                }
-                else
-                {
-                    embeddings
-                        = std::make_shared<TensileLite::EmbeddingSimilarity::SolutionEmbeddings>();
-                    lib.embeddings = embeddings;
-                }
-                iot::mapRequired(io, "solution_embeddings", *embeddings);
+                auto embeddings = std::make_shared<TensileLite::EmbeddingSimilarity::SolutionEmbeddings>();
+                lib.embeddings  = embeddings;
+                iot::mapOptional(io, "solution_embeddings", *embeddings);
 
-                std::shared_ptr<EmbeddingSimilarity::HardwareConstants> hw_constants;
-                if(iot::outputting(io))
-                {
-                    hw_constants = lib.hw_constants;
-                }
-                else
-                {
-                    hw_constants = std::make_shared<EmbeddingSimilarity::HardwareConstants>();
-                    lib.hw_constants = hw_constants;
-                }
-                iot::mapRequired(io, "hardware_constants", *hw_constants);
+                auto hw_constants = std::make_shared<EmbeddingSimilarity::HardwareConstants>();
+                lib.hw_constants  = hw_constants;
+                iot::mapOptional(io, "hardware_constants", *hw_constants);
 
-                // Fallback rules (optional)
-                std::shared_ptr<EmbeddingSimilarity::FallbackRules> fallback_rules;
-                if(iot::outputting(io))
-                {
-                    fallback_rules = lib.fallback_rules;
-                }
-                else
-                {
-                    fallback_rules = std::make_shared<EmbeddingSimilarity::FallbackRules>();
-                    lib.fallback_rules = fallback_rules;
-                }
+                auto fallback_rules = std::make_shared<EmbeddingSimilarity::FallbackRules>();
+                lib.fallback_rules  = fallback_rules;
                 iot::mapOptional(io, "fallback", *fallback_rules);
-                
-                // Validation : Only assign if data was actually loaded
-                if (fallback_rules->hasData())
+
+                if(fallback_rules->hasData())
                 {
-                    if (!fallback_rules->valid())
+                    if(!fallback_rules->valid())
                     {
                         throw std::runtime_error(
                             "ERROR: EmbeddingSimilarity fallback_rules are invalid.");
@@ -374,18 +337,22 @@ namespace TensileLite
 
                 bool quantize = false;
                 iot::mapOptional(io, "quantize", quantize);
-                
-                if (quantize)
+
+                if(quantize)
                 {
                     lib.quantize();
                 }
 
-                // Validation
+                const bool model_loaded = !encoder->network.proj_bias_.empty()
+                                          && !embeddings->embeddings.empty();
+
+                if(!model_loaded)
+                    return;
+
                 if(!hw_constants->valid())
                     throw std::runtime_error(
                         "ERROR: EmbeddingSimilarity hardware constants are invalid.");
 
-                // Checks
                 if(embeddings->size() != lib.solutions.size())
                     throw std::runtime_error(
                         "ERROR: EmbeddingSimilarity library solution embeddings amount "
@@ -395,19 +362,10 @@ namespace TensileLite
                     throw std::runtime_error(
                         "ERROR: EmbeddingSimilarity library solution embeddings amount equals 0");
 
-                if(lib.encoder->network.proj_bias_.size() != embeddings->embeddings[0][0].size())
+                if(encoder->network.proj_bias_.size() != embeddings->embeddings[0][0].size())
                     throw std::runtime_error(
                         "ERROR: EmbeddingSimilarity library solution embeddings size "
                         "does not match the network output size.");
-                
-                // TODO
-                // if(lib.encoder->network.weights[0].size() != (91 * lib.encoder->network.bias[0].size()))
-                // {
-                //     throw std::runtime_error(
-                //         "ERROR: EmbeddingSimilarity network input size ("
-                //         + std::to_string((int) (lib.encoder->network.weights[0].size() / lib.encoder->network.bias[0].size()))
-                //         + ") does not match the input vector size (91)");
-                // }
             }
 
             const static bool flow = false;

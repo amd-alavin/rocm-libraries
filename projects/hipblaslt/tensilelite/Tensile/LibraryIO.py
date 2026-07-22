@@ -362,6 +362,8 @@ def parseLibraryLogicData(
     if isinstance(data, List):
         data = parseLibraryLogicList(data, srcFile)
     elif data.get("LibraryType", "") == "EmbeddingSimilarity":
+        if "Library" not in data:
+            data["Library"] = {}
         data["Library"]["table"] = [0, len(data["Solutions"])]
 
     if "CUCount" not in data:
@@ -502,6 +504,10 @@ def parseLibraryLogicList(data, srcFile="?"):
         rv["Library"]["indexOrder"] = None
         rv["Library"]["table"] = [0, len(data[5])]
         rv["Library"]["distance"] = None
+    elif libraryType == "EmbeddingSimilarity":
+        rv["LibraryType"] = "EmbeddingSimilarity"
+        rv["Library"] = {}
+        rv["Library"]["table"] = [0, len(data[5])]
     else:
         rv["LibraryType"] = "Matching"
         rv["Library"] = {}

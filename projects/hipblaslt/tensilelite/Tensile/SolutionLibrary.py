@@ -263,7 +263,7 @@ class MLPClassificationLibrary:
 
 class EmbeddingSimilarityLibrary:
     Tag = "EmbeddingSimilarity"
-    StateKeys = [("type", "tag"), "table", "encoder", "solution_embeddings", "hardware_constants", "quantize", "fallback"]
+    StateKeys = [("type", "tag"), "table"]
 
     @classmethod
     def FromOriginalState(cls, d, solutions):
@@ -278,10 +278,10 @@ class EmbeddingSimilarityLibrary:
                 table.append(value)
         except KeyError:
             pass
-        
-        encoder = d["encoder"]
-        solution_embeddings = d["solution_embeddings"]
-        hardware_constants = d["hardware_constants"]
+
+        encoder = d.get("encoder")
+        solution_embeddings = d.get("solution_embeddings")
+        hardware_constants = d.get("hardware_constants")
         quantize = d.get("quantize", False)
         fallback = d.get("fallback", {})
         return cls(table, encoder, solution_embeddings, hardware_constants, quantize, fallback)
