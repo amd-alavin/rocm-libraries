@@ -137,20 +137,86 @@ st.func @no_wait_no_dep() {
   v10 = "st.buffer_load_b32"(v20) { issueCycles = 1, latencyCycles = 100 }
 }
 
-#--- Two pending VALU event types (CSMACC + TRANS) on VA_VDST force the
-#--- counter into out-of-order mode → emitted wait is forced to 0.
-# CHECK-LABEL: @va_vdst_ooo_forces_zero
+#--- Producer is the ONLY op in its VALU sub-pipe (v_rcp_f32 → TRANS), with a
+#--- later CSMACC (v_add_f32) in a different pipe. The consumer needs the TRANS
+#--- result; it has zero same-pipe followers (f=0), so the wait is 0 even though
+#--- the optimization is active. Two pipes are live, but the per-pipe follower
+#--- count — not the presence of mixed pipes — is what drives the value here.
+# CHECK-LABEL: @va_vdst_producer_last_of_pipe_zero
 # CHECK: v_rcp_f32
 # CHECK: v_add_f32
 # CHECK: s_wait_alu
 # CHECK-SAME: va_vdst = 0
 # CHECK: buffer_load_b32
 
-st.func @va_vdst_ooo_forces_zero() {
+st.func @va_vdst_producer_last_of_pipe_zero() {
 ^entry:
   v0 = "st.v_rcp_f32"(v1) { issueCycles = 1, latencyCycles = 8 }
   v2 = "st.v_add_f32"(v3, v4) { issueCycles = 1, latencyCycles = 5 }
   v10 = "st.buffer_load_b32"(v0) { issueCycles = 1, latencyCycles = 100 }
+}
+
+#--- Per-pipe OOO optimization: a CSMACC producer (v10) with ONE later same-pipe
+#--- CSMACC (v20), plus a TRANS (v_rcp_f32) in a second pipe. The consumer needs
+#--- v10. CSMACC pipe has issued=2, producer ordinal=1 → f=1 same-pipe follower,
+#--- so the emitted wait is va_vdst(1), NOT the conservative 0 the old lumped
+#--- out-of-order handling produced. In-order-within-pipe guarantees the producer
+#--- is done once its one follower drains, regardless of the TRANS pipe.
+# CHECK-LABEL: @va_vdst_ooo_follower_nonzero
+# CHECK: v_add_f32
+# CHECK: v_add_f32
+# CHECK: v_rcp_f32
+# CHECK: s_wait_alu
+# CHECK-SAME: va_vdst = 1
+# CHECK: buffer_load_b32
+
+st.func @va_vdst_ooo_follower_nonzero() {
+^entry:
+  v10 = "st.v_add_f32"(v1, v2) { issueCycles = 1, latencyCycles = 5 }
+  v20 = "st.v_add_f32"(v3, v4) { issueCycles = 1, latencyCycles = 5 }
+  v30 = "st.v_rcp_f32"(v5) { issueCycles = 1, latencyCycles = 8 }
+  v40 = "st.buffer_load_b32"(v10) { issueCycles = 1, latencyCycles = 100 }
+}
+
+#--- Per-pipe OOO fallback: the CSMACC producer (v10) is the LAST op in its pipe,
+#--- with two later TRANS (v_rcp_f32) in a second pipe. The consumer needs v10 but
+#--- it has zero same-pipe followers (f=0), so no non-zero wait is provable —
+#--- va_vdst(0). The trailing other-pipe ops cannot lift the wait because they may
+#--- complete out-of-order with the producer.
+# CHECK-LABEL: @va_vdst_ooo_producer_last_zero
+# CHECK: v_add_f32
+# CHECK: v_rcp_f32
+# CHECK: v_rcp_f32
+# CHECK: s_wait_alu
+# CHECK-SAME: va_vdst = 0
+# CHECK: buffer_load_b32
+
+st.func @va_vdst_ooo_producer_last_zero() {
+^entry:
+  v10 = "st.v_add_f32"(v1, v2) { issueCycles = 1, latencyCycles = 5 }
+  v30 = "st.v_rcp_f32"(v5) { issueCycles = 1, latencyCycles = 8 }
+  v50 = "st.v_rcp_f32"(v6) { issueCycles = 1, latencyCycles = 8 }
+  v40 = "st.buffer_load_b32"(v10) { issueCycles = 1, latencyCycles = 100 }
+}
+
+#--- Consumer needs TWO producers in different pipes: CSMACC v10 (with a same-pipe
+#--- follower v20 → f=1) AND TRANS v30 (last of its pipe → f=0). The final wait is
+#--- min(1, 0) = 0: we must drain fully because the TRANS operand can't use a
+#--- non-zero wait. addWait's min across operands picks the tightest.
+# CHECK-LABEL: @va_vdst_ooo_two_pipe_consumer_min
+# CHECK: v_add_f32
+# CHECK: v_add_f32
+# CHECK: v_rcp_f32
+# CHECK: s_wait_alu
+# CHECK-SAME: va_vdst = 0
+# CHECK: buffer_load_b32
+
+st.func @va_vdst_ooo_two_pipe_consumer_min() {
+^entry:
+  v10 = "st.v_add_f32"(v1, v2) { issueCycles = 1, latencyCycles = 5 }
+  v20 = "st.v_add_f32"(v3, v4) { issueCycles = 1, latencyCycles = 5 }
+  v30 = "st.v_rcp_f32"(v5) { issueCycles = 1, latencyCycles = 8 }
+  v40 = "st.buffer_load_b32"(v10, v30) { issueCycles = 1, latencyCycles = 100 }
 }
 
 #--- Fall-off exit: the function has no s_endpgm. Mode2 is enabled at entry and
@@ -212,4 +278,143 @@ st.func @valu_src_no_war_diff_reg() {
 ^entry:
   v10 = "st.v_add_f32"(v0, v2) { issueCycles = 1, latencyCycles = 5 }
   v30 = "st.buffer_load_b32"(v5) { issueCycles = 1, latencyCycles = 100 }
+}
+
+#--- VM_VSRC per-ordering-group follower count (opts 1 & 2). The WAR wait at the
+#--- writer of a still-read memory source is the same-group follower count of the
+#--- producer, NOT a full drain. Group A = {ds_*, flat_*}, Group B =
+#--- {buffer/global/scratch/image, flat_*}; flat_* is in BOTH. Other groups only
+#--- inflate the shared counter, so cross-group mixes are safe (f>0 ⇒ precise).
+
+#--- Group A, two ds_loads: producer v0 has 1 same-group follower → vm_vsrc(1).
+# CHECK-LABEL: @vm_ds_ds_follower
+# CHECK: ds_load_b32
+# CHECK: ds_load_b32
+# CHECK: s_wait_alu
+# CHECK-SAME: vm_vsrc = 1
+# CHECK: v_mov_b32
+
+st.func @vm_ds_ds_follower() {
+^entry:
+  v10 = "st.ds_load_b32"(v0) { issueCycles = 1, latencyCycles = 52, mod.ds = { na = 1, offset = 0, gds = false } }
+  v11 = "st.ds_load_b32"(v1) { issueCycles = 1, latencyCycles = 52, mod.ds = { na = 1, offset = 0, gds = false } }
+  v0 = "st.v_mov_b32"(v4) { issueCycles = 1, latencyCycles = 5 }
+}
+
+#--- Cross-group (LDS producer + follower, plus a Group-B buffer_load). The old
+#--- conservative rule drained to vm_vsrc(0) here; the per-group count sees the
+#--- producer's 1 Group-A follower and emits vm_vsrc(1). The buffer_load in the
+#--- other group only inflates the shared counter → still safe.
+# CHECK-LABEL: @vm_ds_buffer_follower
+# CHECK: ds_load_b32
+# CHECK: ds_load_b32
+# CHECK: buffer_load_b32
+# CHECK: s_wait_alu
+# CHECK-SAME: vm_vsrc = 1
+# CHECK: v_mov_b32
+
+st.func @vm_ds_buffer_follower() {
+^entry:
+  v10 = "st.ds_load_b32"(v0) { issueCycles = 1, latencyCycles = 52, mod.ds = { na = 1, offset = 0, gds = false } }
+  v11 = "st.ds_load_b32"(v1) { issueCycles = 1, latencyCycles = 52, mod.ds = { na = 1, offset = 0, gds = false } }
+  v12 = "st.buffer_load_b32"(v2) { issueCycles = 1, latencyCycles = 100 }
+  v0 = "st.v_mov_b32"(v4) { issueCycles = 1, latencyCycles = 5 }
+}
+
+#--- Cross-group where the LDS producer is the LAST op of Group A (no same-group
+#--- follower). f==0 ⇒ must drain to vm_vsrc(0). The two Group-B buffer_loads
+#--- cannot prove the ds_load done (disjoint FIFO).
+# CHECK-LABEL: @vm_ds_buffer_last_of_group
+# CHECK: ds_load_b32
+# CHECK: buffer_load_b32
+# CHECK: buffer_load_b32
+# CHECK: s_wait_alu
+# CHECK-SAME: vm_vsrc = 0
+# CHECK: v_mov_b32
+
+st.func @vm_ds_buffer_last_of_group() {
+^entry:
+  v10 = "st.ds_load_b32"(v0) { issueCycles = 1, latencyCycles = 52, mod.ds = { na = 1, offset = 0, gds = false } }
+  v11 = "st.buffer_load_b32"(v1) { issueCycles = 1, latencyCycles = 100 }
+  v12 = "st.buffer_load_b32"(v2) { issueCycles = 1, latencyCycles = 100 }
+  v0 = "st.v_mov_b32"(v4) { issueCycles = 1, latencyCycles = 5 }
+}
+
+#--- flat_* producer is in BOTH groups; it has a follower in each (a ds_load in
+#--- Group A, a buffer_load in Group B). f = max(fA=1, fB=1) = 1 → vm_vsrc(1).
+# CHECK-LABEL: @vm_flat_both_groups
+# CHECK: flat_load_b32
+# CHECK: ds_load_b32
+# CHECK: buffer_load_b32
+# CHECK: s_wait_alu
+# CHECK-SAME: vm_vsrc = 1
+# CHECK: v_mov_b32
+
+st.func @vm_flat_both_groups() {
+^entry:
+  v40 = "st.flat_load_b32"(v[0:1], s[16:17]) { issueCycles = 1, latencyCycles = 20 }
+  v41 = "st.ds_load_b32"(v2) { issueCycles = 1, latencyCycles = 52, mod.ds = { na = 1, offset = 0, gds = false } }
+  v42 = "st.buffer_load_b32"(v3) { issueCycles = 1, latencyCycles = 100 }
+  v0 = "st.v_mov_b32"(v4) { issueCycles = 1, latencyCycles = 5 }
+}
+
+#--- ds_load producer with a flat_load follower: flat is a Group-A member, so it
+#--- counts as a same-group follower of the ds_load → vm_vsrc(1).
+# CHECK-LABEL: @vm_flat_ds_groupA
+# CHECK: ds_load_b32
+# CHECK: flat_load_b32
+# CHECK: s_wait_alu
+# CHECK-SAME: vm_vsrc = 1
+# CHECK: v_mov_b32
+
+st.func @vm_flat_ds_groupA() {
+^entry:
+  v40 = "st.ds_load_b32"(v0) { issueCycles = 1, latencyCycles = 52, mod.ds = { na = 1, offset = 0, gds = false } }
+  v41 = "st.flat_load_b32"(v[2:3], s[16:17]) { issueCycles = 1, latencyCycles = 20 }
+  v0 = "st.v_mov_b32"(v4) { issueCycles = 1, latencyCycles = 5 }
+}
+
+#--- flat_* producer with a Group-B buffer_load follower: fA=0 (no Group-A
+#--- follower), fB=1 → max=1 → vm_vsrc(1). flat benefits from either group.
+# CHECK-LABEL: @vm_flat_buffer_groupB
+# CHECK: flat_load_b32
+# CHECK: buffer_load_b32
+# CHECK: s_wait_alu
+# CHECK-SAME: vm_vsrc = 1
+# CHECK: v_mov_b32
+
+st.func @vm_flat_buffer_groupB() {
+^entry:
+  v40 = "st.flat_load_b32"(v[0:1], s[16:17]) { issueCycles = 1, latencyCycles = 20 }
+  v41 = "st.buffer_load_b32"(v2) { issueCycles = 1, latencyCycles = 100 }
+  v0 = "st.v_mov_b32"(v4) { issueCycles = 1, latencyCycles = 5 }
+}
+
+#--- Single ds_load, last (and only) op of its group: f==0 → vm_vsrc(0).
+# CHECK-LABEL: @vm_ds_last_single
+# CHECK: ds_load_b32
+# CHECK: s_wait_alu
+# CHECK-SAME: vm_vsrc = 0
+# CHECK: v_mov_b32
+
+st.func @vm_ds_last_single() {
+^entry:
+  v10 = "st.ds_load_b32"(v0) { issueCycles = 1, latencyCycles = 52, mod.ds = { na = 1, offset = 0, gds = false } }
+  v0 = "st.v_mov_b32"(v4) { issueCycles = 1, latencyCycles = 5 }
+}
+
+#--- Four ds_loads in Group A; producer v0 has 3 same-group followers → vm_vsrc(3).
+# CHECK-LABEL: @vm_many_ds
+# CHECK: ds_load_b32
+# CHECK: s_wait_alu
+# CHECK-SAME: vm_vsrc = 3
+# CHECK: v_mov_b32
+
+st.func @vm_many_ds() {
+^entry:
+  v10 = "st.ds_load_b32"(v0) { issueCycles = 1, latencyCycles = 52, mod.ds = { na = 1, offset = 0, gds = false } }
+  v11 = "st.ds_load_b32"(v1) { issueCycles = 1, latencyCycles = 52, mod.ds = { na = 1, offset = 0, gds = false } }
+  v12 = "st.ds_load_b32"(v2) { issueCycles = 1, latencyCycles = 52, mod.ds = { na = 1, offset = 0, gds = false } }
+  v13 = "st.ds_load_b32"(v3) { issueCycles = 1, latencyCycles = 52, mod.ds = { na = 1, offset = 0, gds = false } }
+  v0 = "st.v_mov_b32"(v4) { issueCycles = 1, latencyCycles = 5 }
 }
