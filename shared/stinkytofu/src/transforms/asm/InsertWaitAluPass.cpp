@@ -510,7 +510,12 @@ class WaitcntBrackets {
     // f==0 (producer is the last op of its pipe/FIFO).
     void determineWait(CounterType c, const RegKey& k, Wait& wait, const char* role) const {
         auto it = scores.find(k);
-        if (it == scores.end()) return;
+        if (it == scores.end()) {
+            PASS_DEBUG(std::cerr << "[InsertWaitAlu]     no-wait " << counterName(c) << " on v"
+                                 << k.idx << "(" << halfName(k.half) << "," << role
+                                 << ") [no stamp]\n");
+            return;
+        }
         const VgprStamp& s = it->second;
 
         if (c == CT_VM_VSRC) {
@@ -519,7 +524,16 @@ class WaitcntBrackets {
             // it entered, no wait.
             bool liveLds = s.vmOrdLds && s.vmOrdLds > vmFifoLB[FIFO_LDS];
             bool liveTex = s.vmOrdTex && s.vmOrdTex > vmFifoLB[FIFO_TEX];
-            if (!liveLds && !liveTex) return;  // no producer / proven done
+            if (!liveLds && !liveTex) {
+                PASS_DEBUG(std::cerr
+                           << "[InsertWaitAlu]     no-wait vm_vsrc on v" << k.idx << "("
+                           << halfName(k.half) << "," << role << ")" << " [LDS ord=" << s.vmOrdLds
+                           << " ub=" << vmFifoUB[FIFO_LDS] << " lb=" << vmFifoLB[FIFO_LDS] << "]"
+                           << " [TEX ord=" << s.vmOrdTex << " ub=" << vmFifoUB[FIFO_TEX]
+                           << " lb=" << vmFifoLB[FIFO_TEX] << "]" << " liveLds=" << liveLds
+                           << " liveTex=" << liveTex << " → drained (no wait)\n");
+                return;  // no producer / proven done
+            }
             unsigned f = vmFollowers(s);
             unsigned chosen = (f > 0) ? std::min(f, maxEmittableWait(c)) : 0u;
             addWait(wait, c, chosen);
@@ -545,7 +559,14 @@ class WaitcntBrackets {
 
         Pipe pipe = s.vaPipe;
         unsigned ord = s.vaOrdinal;
-        if (ord == 0 || ord <= lb[pipe]) return;  // no producer / proven done
+        if (ord == 0 || ord <= lb[pipe]) {  // no producer / proven done
+            PASS_DEBUG(std::cerr << "[InsertWaitAlu]     no-wait va_vdst on v" << k.idx << "("
+                                 << halfName(k.half) << "," << role << ") [pipe=" << pipeName(pipe)
+                                 << " ord=" << ord << " ub=" << ub[pipe] << " lb=" << lb[pipe]
+                                 << "] → " << (ord == 0 ? "no producer" : "drained")
+                                 << " (no wait)\n");
+            return;
+        }
 
         unsigned f = ub[pipe] - ord;  // same-pipe followers, all still in flight
         bool ooo = counterOutOfOrder(c);
