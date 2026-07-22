@@ -457,11 +457,18 @@ class WaitcntBrackets {
         auto stampVM = [&](unsigned idx, HighBitSel half) {
             RegKey k = keyer.producerKey(idx, half);
             VgprStamp& s = scores[k];
-            s.vmOrdLds = ordLds;
-            s.vmOrdTex = ordTex;
+            // Update ONLY the FIFO(s) this op enqueues into. A pure-TEX op must
+            // not clear a still-live LDS reader's ordinal (and vice versa): the
+            // same VGPR can be read in-flight by ops in BOTH FIFOs at once (two
+            // distinct readers), and the WAR writer must wait for both. Erasing
+            // one side would drop its wait. A stale ordinal from an already-
+            // drained reader is harmless — the floor check in determineWait
+            // treats ord <= lb as not-live.
+            if (enqueuesFifoLds(ev)) s.vmOrdLds = ordLds;
+            if (enqueuesFifoTex(ev)) s.vmOrdTex = ordTex;
             PASS_DEBUG(std::cerr << "[InsertWaitAlu]     stamp vm v" << k.idx << "("
-                                 << halfName(k.half) << ") [LDS ord=" << ordLds << "]"
-                                 << " [TEX ord=" << ordTex << "]\n");
+                                 << halfName(k.half) << ") [LDS ord=" << s.vmOrdLds << "]"
+                                 << " [TEX ord=" << s.vmOrdTex << "]\n");
         };
         // VM_VSRC tracks in-flight VMEM reads, which are always full DWORD.
         forEachVGPR(
@@ -492,14 +499,26 @@ class WaitcntBrackets {
             });
     }
 
-    // Same-FIFO follower count for a VM_VSRC producer stamp. A flat_* producer
-    // is in both FIFOs; it benefits from followers in EITHER (whichever FIFO's
-    // in-order guarantee proves it done first ⇒ take the max). FIFOs the
-    // producer did not enter contribute 0.
+    // Follower count for a WAR against the in-flight VM readers of a VGPR.
+    // A reg may be read in-flight by ops in BOTH FIFOs at once — either two
+    // distinct readers (a ds and a buffer), or one flat op that enqueued into
+    // both. The WAR writer is safe only once EVERY live reader is proven done,
+    // and reader(s) in FIFO g are proven done when the counter falls to
+    // f_g = UB[g] - ord_g. So the binding wait is the MIN of f_g over the LIVE
+    // FIFOs (the strictest / longest wait). A FIFO whose reader is already
+    // drained (ord <= LB) is not live and does not constrain.
+    //
+    // min (not max) is required for the two-distinct-readers case; for a single
+    // flat op min is merely conservative (either f_g would prove it done, but we
+    // cannot distinguish flat from distinct readers in the stamp, so we take the
+    // safe bound). Caller guarantees at least one FIFO is live.
     unsigned vmFollowers(const VgprStamp& s) const {
-        unsigned fLds = s.vmOrdLds ? (vmFifoUB[FIFO_LDS] - s.vmOrdLds) : 0u;
-        unsigned fTex = s.vmOrdTex ? (vmFifoUB[FIFO_TEX] - s.vmOrdTex) : 0u;
-        return std::max(fLds, fTex);
+        bool liveLds = s.vmOrdLds && s.vmOrdLds > vmFifoLB[FIFO_LDS];
+        bool liveTex = s.vmOrdTex && s.vmOrdTex > vmFifoLB[FIFO_TEX];
+        unsigned f = ~0u;
+        if (liveLds) f = std::min(f, vmFifoUB[FIFO_LDS] - s.vmOrdLds);
+        if (liveTex) f = std::min(f, vmFifoUB[FIFO_TEX] - s.vmOrdTex);
+        return f;  // caller ensures liveLds || liveTex, so f was set
     }
 
     // Emit a wait for the hazard on VGPR `k` against counter `c`. The producer's
@@ -519,9 +538,9 @@ class WaitcntBrackets {
         const VgprStamp& s = it->second;
 
         if (c == CT_VM_VSRC) {
-            // Per-FIFO follower count. FIFO membership is by instruction type
-            // (flat_* ∈ both). If the producer is proven drained in every FIFO
-            // it entered, no wait.
+            // WAR against in-flight VM readers of this reg. If every FIFO's
+            // reader is proven drained (ord <= LB), no wait; otherwise the wait
+            // is min f over the live FIFOs (see vmFollowers).
             bool liveLds = s.vmOrdLds && s.vmOrdLds > vmFifoLB[FIFO_LDS];
             bool liveTex = s.vmOrdTex && s.vmOrdTex > vmFifoLB[FIFO_TEX];
             if (!liveLds && !liveTex) {
