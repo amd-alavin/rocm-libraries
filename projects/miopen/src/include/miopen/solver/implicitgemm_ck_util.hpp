@@ -366,12 +366,20 @@ template <typename DeviceOpType,
           typename ProblemDescriptionType = miopen::conv::ProblemDescription>
 size_t GetCKSplitkMaxWorkspaceSize(const ProblemDescriptionType& problem)
 {
-    const auto args                = CKArgsType{problem};
-    std::size_t max_workspace_size = 0;
+    const auto args                 = CKArgsType{problem};
+    std::size_t max_workspace_size  = 0;
+    const bool require_large_tensor = RequiresLargeTensorCKInstance(problem);
 
     const auto ptrs = DeviceOpType::GetInstances();
     for(auto& ptr : ptrs)
     {
+        // For >INT_MAX problems, only large-tensor instances are valid; querying
+        // a non-large instance here would drive MakeArgPtr through the int32
+        // narrowing path and trip ToCKIndexArray. Mirror the filter used by
+        // FillValidKernelsIDs / IsCKArgsSupported / IsCKApplicable.
+        if(require_large_tensor && !IsLargeTensorCKInstance(ptr))
+            continue;
+
         // Cycle `split_k` over {1,2,4,...,128} then `CkSplitkAutoDeduce`.
         // The loop then restarts from 1 for the next conv instance.
         auto split_k = 1;
