@@ -367,6 +367,12 @@ inline unsigned maxEmittableWait(CounterType c) {
 struct VgprStamp {
     Pipe vaPipe = PIPE_CSMACC;  // meaningful only when vaOrdinal != 0
     unsigned vaOrdinal = 0;     // cumulative position within vaPipe
+    // Set by merge() when two predecessors have a live VA producer for this reg
+    // in DIFFERENT pipes: a single (vaPipe, vaOrdinal) cannot represent both, and
+    // comparing ordinals across pipe frames is meaningless (f = ub[pipe]-ord
+    // differs per pipe). The consumer must then drain va_vdst(0). Cleared by the
+    // next onProducer, which re-stamps a clean single-pipe producer.
+    bool vaConflict = false;
     // VM_VSRC per-FIFO ordinals. A pure-LDS producer sets only vmOrdLds, a
     // pure-TEX producer only vmOrdTex; a flat_* producer sets BOTH (it enqueues
     // into both FIFOs). 0 means "not a member of that FIFO".
@@ -416,6 +422,7 @@ class WaitcntBrackets {
                 VgprStamp& s = scores[k];
                 s.vaPipe = pipe;
                 s.vaOrdinal = ord;
+                s.vaConflict = false;  // a fresh single-pipe producer resolves any prior conflict
                 PASS_DEBUG(std::cerr << "[InsertWaitAlu]     stamp va v" << k.idx << "("
                                      << halfName(k.half) << ") [pipe=" << pipeName(pipe)
                                      << " ord=" << ord << "]\n");
@@ -523,6 +530,16 @@ class WaitcntBrackets {
                                  << " [TEX ord=" << s.vmOrdTex << " ub=" << vmFifoUB[FIFO_TEX]
                                  << " lb=" << vmFifoLB[FIFO_TEX] << "]" << " f=" << f
                                  << " → wait=" << chosen << "\n");
+            return;
+        }
+
+        // A cross-pipe merge conflict means we cannot prove a safe non-zero wait
+        // for this reg (two different-pipe producers, incomparable follower
+        // counts): drain to va_vdst(0), the only value safe for both.
+        if (s.vaConflict) {
+            addWait(wait, c, 0);
+            PASS_DEBUG(std::cerr << "[InsertWaitAlu]     wait hit va_vdst on v" << k.idx << "("
+                                 << halfName(k.half) << "," << role << ") [vaConflict] → wait=0\n");
             return;
         }
 
@@ -639,8 +656,10 @@ class WaitcntBrackets {
         for (auto& [k, s] : scores) {
             auto it = other.scores.find(k);
             const VgprStamp* o = (it != other.scores.end()) ? &it->second : nullptr;
-            mergeVaSide(s.vaPipe, s.vaOrdinal, o ? o->vaPipe : PIPE_CSMACC, o ? o->vaOrdinal : 0,
-                        myShift, otherShift, myOldFloor, otherOldFloor, strictDom);
+            s.vaConflict =
+                mergeVaSide(s.vaPipe, s.vaOrdinal, s.vaConflict, o ? o->vaPipe : PIPE_CSMACC,
+                            o ? o->vaOrdinal : 0, o ? o->vaConflict : false, myShift, otherShift,
+                            myOldFloor, otherOldFloor, strictDom);
             mergeFifoOrd(s.vmOrdLds, o ? o->vmOrdLds : 0, FIFO_LDS, fMyShift, fOtherShift,
                          fMyOldFloor, fOtherOldFloor, strictDom);
             mergeFifoOrd(s.vmOrdTex, o ? o->vmOrdTex : 0, FIFO_TEX, fMyShift, fOtherShift,
@@ -660,15 +679,33 @@ class WaitcntBrackets {
         return n;
     }
 
-    // Merge the VA side of a VGPR stamp: shift both producers past their floors
-    // and keep the later (more conservative) one.
-    static void mergeVaSide(Pipe& myPipe, unsigned& myOrd, Pipe oPipe, unsigned oOrd,
+    // Merge the VA side of a VGPR stamp. Shift each side's producer into the
+    // widened frame, dropping any already below its floor. Then:
+    //  - if both sides have a live producer in DIFFERENT pipes, the follower
+    //    counts (f = ub[pipe]-ord) live in incomparable frames, so no single
+    //    (pipe, ord) is safe for both paths → mark conflict (consumer drains).
+    //  - otherwise (same pipe, or only one live) keep the later ordinal, which
+    //    within one pipe frame is the smaller-f / stricter producer.
+    // Returns whether this reg is conflicted after the merge.
+    static bool mergeVaSide(Pipe& myPipe, unsigned& myOrd, bool myConflict, Pipe oPipe,
+                            unsigned oOrd, bool oConflict,
                             const std::array<unsigned, NUM_PIPES>& myShift,
                             const std::array<unsigned, NUM_PIPES>& otherShift,
                             const std::array<unsigned, NUM_PIPES>& myOldFloor,
                             const std::array<unsigned, NUM_PIPES>& otherOldFloor, bool& strictDom) {
         unsigned myS = myOrd <= myOldFloor[myPipe] ? 0 : myOrd + myShift[myPipe];
         unsigned oS = (oOrd && oOrd > otherOldFloor[oPipe]) ? oOrd + otherShift[oPipe] : 0;
+        bool myLive = myS > 0, oLive = oS > 0;
+
+        // Conflict is one-way (lattice top): inherit from either predecessor, or
+        // arise here from two live different-pipe producers.
+        if (myConflict || oConflict || (myLive && oLive && myPipe != oPipe)) {
+            if (!myConflict) strictDom = true;  // newly conflicted vs my prior state
+            myOrd = std::max(myS, oS);          // keep an ordinal so liveness persists
+            if (oS > myS) myPipe = oPipe;
+            return true;
+        }
+
         if (oS > myS) {
             myPipe = oPipe;
             myOrd = oS;
@@ -676,6 +713,7 @@ class WaitcntBrackets {
         } else {
             myOrd = myS;
         }
+        return false;
     }
 
     // Merge one VM_VSRC per-FIFO ordinal of a VGPR stamp. Fixed FIFO `g` (unlike
