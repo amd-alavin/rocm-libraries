@@ -610,6 +610,30 @@ void insertLoopCounterLGatedClusterBarrierWaitBefore(IRBase* anchor, AsmIRBuilde
 void insertClusterBarrierWaitBefore(IRBase* anchor, const char* comment, AsmIRBuilder& irBuilder,
                                     GfxArchID archId);
 
+/// Emit `s_wait_tensorcnt 0` immediately before \p anchor, where \p anchor is
+/// the instruction right after a cooperative `tensor_load_to_lds` group. Under
+/// PGR>=2 the cluster/broadcast round runs at the TOP of the mainloop, so a
+/// pre-round broadcast drain (before the wave-gated cluster-scope arrive) would
+/// only retire the PREVIOUS iteration's load -- one iteration too late for the consumer
+/// that reads the freshly cooperatively-loaded LDS half at the next loop head
+/// (the producing wave is a peer wave, so the consumer's own tensor counter is
+/// already zero and cannot order the peer's async write). Draining right after
+/// the load issues makes the cooperative broadcast coherent before the back
+/// edge, so the publishing workgroup barrier at the next loop head correctly
+/// orders it for the consuming waves. Matches PGR1, which drains each load in
+/// its own iteration.
+void insertProducerTensorDrainBefore(IRBase* anchor, AsmIRBuilder& irBuilder, GfxArchID archId) {
+    const HwInstDesc* waitDesc = getMCIDByUOp(GFX::s_wait_tensorcnt, archId);
+    assert(waitDesc && "s_wait_tensorcnt opcode is not supported on this architecture");
+    StinkyInstruction* w = irBuilder.create(waitDesc, anchor);
+    w->addSrcReg(StinkyRegister(0));
+    SWaitTensorCntData d;
+    d.tlcnt = 0;
+    w->addModifier<SWaitTensorCntData>(d);
+    w->addModifier<CommentData>(
+        CommentData{"retire cooperative tensor_load_to_lds before back-edge (PGR>=2 coherence)"});
+}
+
 /// Emit Rule 4's cluster-barrier handshake before `anchor` (the iterator
 /// position right after the load's anchoring `s_barrier_wait -1`).
 ///
@@ -644,61 +668,11 @@ void insertClusterBarrierWaitBefore(IRBase* anchor, const char* comment, AsmIRBu
 ///       gate keys off the same absolute iteration even when the schedule
 ///       decremented LCL before the anchor.
 ///
-/// Emit `s_wait_tensorcnt 0` immediately before \p anchor, mirroring how the
-/// waitcnt-insertion pass materializes a tensor drain. This runs on every wave
-/// (it precedes the WaveIdx-gated signal block) so each wave retires its own
-/// cooperative tensor_load_to_lds. On the StreamKMulticast path the mainloop
-/// cooperative load has odd waves broadcast B into the cluster peers' LDS; that
-/// broadcast is only coherent once its tensor counter has drained, so it must
-/// retire before the peers re-enter the next cluster-scope barrier round.
-void insertBroadcastTensorDrainBefore(IRBase* anchor, AsmIRBuilder& irBuilder, GfxArchID archId) {
-    const HwInstDesc* waitDesc = getMCIDByUOp(GFX::s_wait_tensorcnt, archId);
-    assert(waitDesc && "s_wait_tensorcnt opcode is not supported on this architecture");
-    StinkyInstruction* w = irBuilder.create(waitDesc, anchor);
-    w->addSrcReg(StinkyRegister(0));
-    SWaitTensorCntData d;
-    d.tlcnt = 0;
-    w->addModifier<SWaitTensorCntData>(d);
-    w->addModifier<CommentData>(
-        CommentData{"drain StreamKMulticast cooperative broadcast before cluster-scope round"});
-}
-
-/// Emit `s_wait_tensorcnt 0` immediately before \p anchor, where \p anchor is
-/// the instruction right after a cooperative `tensor_load_to_lds` group. Under
-/// PGR>=2 the cluster/broadcast round runs at the TOP of the mainloop, so the
-/// pre-round broadcast drain (`insertBroadcastTensorDrainBefore`) only retires
-/// the PREVIOUS iteration's load -- one iteration too late for the consumer
-/// that reads the freshly cooperatively-loaded LDS half at the next loop head
-/// (the producing wave is a peer wave, so the consumer's own tensor counter is
-/// already zero and cannot order the peer's async write). Draining right after
-/// the load issues makes the cooperative broadcast coherent before the back
-/// edge, so the publishing workgroup barrier at the next loop head correctly
-/// orders it for the consuming waves. Matches PGR1, which drains each load in
-/// its own iteration.
-void insertProducerTensorDrainBefore(IRBase* anchor, AsmIRBuilder& irBuilder, GfxArchID archId) {
-    const HwInstDesc* waitDesc = getMCIDByUOp(GFX::s_wait_tensorcnt, archId);
-    assert(waitDesc && "s_wait_tensorcnt opcode is not supported on this architecture");
-    StinkyInstruction* w = irBuilder.create(waitDesc, anchor);
-    w->addSrcReg(StinkyRegister(0));
-    SWaitTensorCntData d;
-    d.tlcnt = 0;
-    w->addModifier<SWaitTensorCntData>(d);
-    w->addModifier<CommentData>(
-        CommentData{"retire cooperative tensor_load_to_lds before back-edge (PGR>=2 coherence)"});
-}
-
 /// \p pgrValue and \p lclPreDecrement are consulted by mode (b) only.
-/// \p streamKMulticast, combined with \p pgrValue >= 2, gates the per-iteration
-/// broadcast drain in mode (c) (the mainloop Rule 4 handshake only).
 void insertClusterBarrierHandshakeBefore(IRBase* anchor, AsmIRBuilder& irBuilder, GfxArchID archId,
                                          int pgrValue, StinkyInstruction* liveLclCmp,
-                                         int lclPreDecrement, bool streamKMulticast) {
+                                         int lclPreDecrement) {
     if (kRule4ForceUngatedSignalMode) {
-        // StreamKMulticast + PGR2: drain the cooperative broadcast before the
-        // wave-0-gated arrive so peers see coherent B before the next round.
-        if (streamKMulticast && pgrValue >= 2) {
-            insertBroadcastTensorDrainBefore(anchor, irBuilder, archId);
-        }
         // Mode (c): always-ungated signal. Emit the WaveIdx-gated
         // `s_barrier_signal -3` then a bare `s_barrier_wait -3` for every
         // trigger -- the cluster signal is NEVER wrapped in an LCL skip
@@ -1177,8 +1151,7 @@ class InsertClusterBarrierPassImpl : public Pass {
             for (const auto& [trigger, nextIt, liveLclCmp, lclPreDecrement] : pending) {
                 IRBase* anchor = (nextIt != bb.end()) ? nextIt.getNodePtr() : nullptr;
                 insertClusterBarrierHandshakeBefore(anchor, irBuilder, archId, pgrValue_,
-                                                    liveLclCmp, lclPreDecrement,
-                                                    streamKMulticast_);
+                                                    liveLclCmp, lclPreDecrement);
                 (void)trigger;  // queued for ordering only; insertion uses `anchor`
             }
             // Mode (c): producer-side drain right after each cooperative
