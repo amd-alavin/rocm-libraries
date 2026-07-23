@@ -43,8 +43,31 @@ namespace {
 using namespace stinkytofu;
 using namespace stinkytofu::waitcnt;
 
-bool isVolatileVmemAtomic(const StinkyInstruction& inst) {
+bool isVmemAtomic(const StinkyInstruction& inst) {
     return isMUBUFAtomic(inst) || isFLATAtomic(inst) || isGLOBALAtomic(inst);
+}
+
+bool isDeviceOrSystemScope(MUBUFScope scope) {
+    return scope == MUBUFScope::SCOPE_DEV || scope == MUBUFScope::SCOPE_SYS;
+}
+
+bool hasVolatileVmemModifier(const StinkyInstruction& inst) {
+    if (const auto* mubuf = inst.getModifier<MUBUFModifiers>()) {
+        return mubuf->glc || isDeviceOrSystemScope(mubuf->scope);
+    }
+    if (const auto* flat = inst.getModifier<FLATModifiers>()) {
+        return flat->glc || isDeviceOrSystemScope(flat->scope);
+    }
+    if (const auto* global = inst.getModifier<GLOBALModifiers>()) {
+        return isDeviceOrSystemScope(global->scope);
+    }
+    return false;
+}
+
+bool requiresXcntDrain(const StinkyInstruction& inst) {
+    if (isVmemAtomic(inst)) return true;
+    if (!isBufferMemLoad(inst) && !isBufferMemStore(inst)) return false;
+    return hasVolatileVmemModifier(inst);
 }
 
 bool isXcntDrain(const StinkyInstruction* inst) {
@@ -114,7 +137,7 @@ class StinkyWaitCntInsertionPass : public StinkyInstPass {
                 auto* inst = dyn_cast<StinkyInstruction>(&ir);
                 if (inst == nullptr) continue;
 
-                if (isVolatileVmemAtomic(*inst)) {
+                if (requiresXcntDrain(*inst)) {
                     auto it = plan.anchorWaits.find(inst);
                     if (it != plan.anchorWaits.end() && it->second.isValid()) {
                         it->second.xCount = 0;
